@@ -2,6 +2,16 @@ import { normalizeDisplayText, normalizeSignatureText, stableHash, parseMaybeJso
 
 const STORAGE_KEY = 'notebooklm_classificacao_runner_state_v1';
 const STORAGE_FALLBACK_PREFIX = '__nblm_classificacao_runner__';
+const DEFAULT_WAIT_MS = 90_000;
+const MIN_WAIT_MS = 5_000;
+const MAX_WAIT_MS = 3_600_000;
+
+export function normalizeWaitMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_WAIT_MS;
+
+  return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, Math.round(parsed)));
+}
 
 function readRawStorage() {
   try {
@@ -38,10 +48,11 @@ function writeRawStorage(value) {
 
 export function createDefaultState() {
   return {
-    version: 4,
+    version: 5,
     status: 'idle',
     collapsed: false,
     launcherTop: 120,
+    waitMs: DEFAULT_WAIT_MS,
     draftText: '',
     loadedText: '',
     queue: [],
@@ -88,16 +99,22 @@ export function loadState() {
     state.nextIndex = Number.isFinite(state.nextIndex) ? state.nextIndex : 0;
     state.collapsed = Boolean(state.collapsed);
     state.launcherTop = Number.isFinite(state.launcherTop) ? state.launcherTop : 120;
+    state.waitMs = normalizeWaitMs(state.waitMs);
     state.status = ['idle', 'running', 'paused', 'stopped', 'done', 'error'].includes(state.status)
       ? state.status
       : 'idle';
 
     if (state.currentBatch && typeof state.currentBatch === 'object') {
+      const currentWaitMs = normalizeWaitMs(state.currentBatch.waitMs);
       state.currentBatch = {
         ...state.currentBatch,
         baselineSignatures: Array.isArray(state.currentBatch.baselineSignatures)
           ? state.currentBatch.baselineSignatures.map(signature => String(signature))
           : [],
+        waitMs: currentWaitMs,
+        remainingMs: Number.isFinite(state.currentBatch.remainingMs)
+          ? state.currentBatch.remainingMs
+          : currentWaitMs,
       };
     } else {
       state.currentBatch = null;

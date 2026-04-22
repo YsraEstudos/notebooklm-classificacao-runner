@@ -66,6 +66,7 @@ function makeResponseEntry(index, text) {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
   localStorage.clear();
   snapshotAssistantSignatures.mockReturnValue([]);
@@ -121,6 +122,30 @@ describe('ClassificacaoRunner', () => {
 
     expect(result.text).toBe('Resposta final');
     expect(findLatestAssistantMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses the configured wait time for each batch deadline', async () => {
+    const runner = new ClassificacaoRunner();
+    await runner.loadDraftAndReset(createExampleJson());
+    runner.updateWaitMs(15_000);
+
+    let captureCount = 0;
+    vi.spyOn(runner, 'captureLatestResponse').mockImplementation(async () => {
+      captureCount += 1;
+      return makeAssistantMessage(captureCount, `Resposta IA ${captureCount}`);
+    });
+
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+
+    try {
+      await runner.start();
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(waitForBatchDeadline).toHaveBeenCalledTimes(3);
+    expect(waitForBatchDeadline.mock.calls[0][0]).toBe(16_000);
+    expect(runner.getState().waitMs).toBe(15_000);
   });
 
   it('rewinds progress without clearing the captured history', async () => {

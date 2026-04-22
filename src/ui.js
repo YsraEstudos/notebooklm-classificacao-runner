@@ -45,6 +45,7 @@ export class ClassificacaoPanel {
     onReset,
     onCopyAll,
     onCopyEntry,
+    onWaitMsChange,
     onToggleCollapsed,
     onLauncherTopChange,
     onImportFile,
@@ -58,6 +59,7 @@ export class ClassificacaoPanel {
     this.onReset = onReset;
     this.onCopyAll = onCopyAll;
     this.onCopyEntry = onCopyEntry;
+    this.onWaitMsChange = onWaitMsChange;
     this.onToggleCollapsed = onToggleCollapsed;
     this.onLauncherTopChange = onLauncherTopChange;
     this.onImportFile = onImportFile;
@@ -70,6 +72,7 @@ export class ClassificacaoPanel {
     this.launcherDragState = null;
     this.launcherDragCleanup = null;
     this.suppressLauncherClick = false;
+    this.ignoreWaitEvents = false;
 
     this.host = document.createElement('div');
     this.host.id = 'nlm-classificacao-host';
@@ -402,6 +405,68 @@ export class ClassificacaoPanel {
         flex: 1 1 112px;
       }
 
+      .nlm-wait-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 1 178px;
+        min-height: 40px;
+        padding: 8px 12px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        color: #e2e8f0;
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+      }
+
+      .nlm-wait-control:hover {
+        transform: translateY(-1px);
+        background: rgba(15, 23, 42, 0.62);
+        border-color: rgba(148, 163, 184, 0.26);
+      }
+
+      .nlm-wait-label {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(226, 232, 240, 0.7);
+        white-space: nowrap;
+      }
+
+      .nlm-wait-input {
+        width: 72px;
+        min-width: 64px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px;
+        padding: 6px 8px;
+        background: rgba(2, 6, 23, 0.72);
+        color: #f8fafc;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 800;
+        text-align: center;
+        outline: none;
+        appearance: textfield;
+      }
+
+      .nlm-wait-input::-webkit-outer-spin-button,
+      .nlm-wait-input::-webkit-inner-spin-button {
+        appearance: none;
+        margin: 0;
+      }
+
+      .nlm-wait-input:focus {
+        border-color: rgba(56, 189, 248, 0.8);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
+      }
+
+      .nlm-wait-unit {
+        font-size: 11px;
+        color: rgba(226, 232, 240, 0.56);
+        font-weight: 700;
+      }
+
       .nlm-btn {
         appearance: none;
         border: 0;
@@ -657,7 +722,7 @@ export class ClassificacaoPanel {
     const title = createElement('h2', 'nlm-title');
     title.textContent = 'Classificação em lotes';
     const subtitle = createElement('p', 'nlm-subtitle');
-    subtitle.textContent = 'JSON flexível, envio em blocos de 3 e histórico com cópia rápida.';
+    subtitle.textContent = 'JSON flexível, envio em blocos de 3, espera ajustável e histórico com cópia rápida.';
 
     titleWrap.append(kicker, title, subtitle);
 
@@ -676,7 +741,24 @@ export class ClassificacaoPanel {
     this.startButton = makeButton('Start', 'primary');
     this.pauseButton = makeButton('Pause', 'warm');
     this.stopButton = makeButton('Stop', 'danger');
+    this.waitControl = createElement('label', 'nlm-wait-control');
+    this.waitControl.title = 'Ajuste o tempo de espera em segundos antes de capturar a resposta';
+    this.waitLabel = createElement('span', 'nlm-wait-label');
+    this.waitLabel.textContent = 'Espera';
+    this.waitInput = createElement('input', 'nlm-wait-input');
+    this.waitInput.type = 'number';
+    this.waitInput.min = '5';
+    this.waitInput.max = '3600';
+    this.waitInput.step = '5';
+    this.waitInput.inputMode = 'numeric';
+    this.waitInput.autocomplete = 'off';
+    this.waitInput.spellcheck = false;
+    this.waitInput.setAttribute('aria-label', 'Tempo de espera em segundos');
+    this.waitUnit = createElement('span', 'nlm-wait-unit');
+    this.waitUnit.textContent = 's';
+    this.waitControl.append(this.waitLabel, this.waitInput, this.waitUnit);
     this.resetButton = makeButton('Zerar progresso', 'ghost');
+    this.resetButton.title = 'Voltar a fila ao item 1 sem apagar o histórico';
     this.copyAllButton = makeButton('Copiar tudo', 'secondary');
     this.downloadExampleButton = makeButton('Exemplo', 'ghost');
     this.importFileButton = makeButton('Arquivo', 'ghost');
@@ -686,6 +768,7 @@ export class ClassificacaoPanel {
       this.startButton,
       this.pauseButton,
       this.stopButton,
+      this.waitControl,
       this.resetButton,
       this.copyAllButton,
       this.downloadExampleButton,
@@ -759,7 +842,7 @@ export class ClassificacaoPanel {
     this.footerText = createElement('div', 'nlm-muted');
     this.footerText.textContent = 'Esc pausa e recolhe o painel';
     this.footerInfo = createElement('div', 'nlm-muted');
-    this.footerInfo.textContent = '90s por lote';
+    this.footerInfo.textContent = 'Espera configurável';
     footer.append(this.footerText, this.footerInfo);
     return footer;
   }
@@ -795,6 +878,22 @@ export class ClassificacaoPanel {
     });
     this.downloadExampleButton.addEventListener('click', () => this.onDownloadExample?.());
     this.importFileButton.addEventListener('click', () => this.fileInput?.click());
+
+    this.waitInput.addEventListener('input', () => {
+      if (this.ignoreWaitEvents) return;
+
+      const seconds = Number(this.waitInput.value);
+      if (!Number.isFinite(seconds) || seconds <= 0) return;
+
+      this.onWaitMsChange?.(seconds * 1000);
+    });
+
+    this.waitInput.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
 
     this.railButton.addEventListener('pointerdown', event => {
       if (!this.isCollapsed) return;
@@ -1037,13 +1136,20 @@ export class ClassificacaoPanel {
       this.setEditorValue(state.draftText || '');
     }
 
+    const waitMs = Number.isFinite(state.waitMs) ? state.waitMs : 90_000;
+    const waitSeconds = Math.max(1, Math.round(waitMs / 1000));
+    if (this.shadow.activeElement !== this.waitInput) {
+      this.waitInput.value = String(waitSeconds);
+    }
+
     this.renderHistory(state.history || []);
     this.footerText.textContent = state.collapsed
       ? 'Botão flutuante recolhido. Arraste para mudar de posição.'
       : 'Esc pausa e recolhe o painel.';
+    const configuredWait = formatDuration(waitMs);
     this.footerInfo.textContent = state.status === 'running' && current?.phase === 'waiting'
-      ? `Aguardando: ${formatDuration(current.remainingMs ?? 0)}`
-      : `90s por lote · ${formatDateTime(state.updatedAt) || 'sem data'}`;
+      ? `Aguardando: ${formatDuration(current.remainingMs ?? 0)} · base ${configuredWait}`
+      : `${configuredWait} por lote · ${formatDateTime(state.updatedAt) || 'sem data'}`;
   }
 
   renderHistory(history) {

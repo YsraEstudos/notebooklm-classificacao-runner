@@ -9,6 +9,7 @@ import {
   copyText,
   createAbortError,
   delay,
+  formatDuration,
   normalizeDisplayText,
 } from './utils';
 import {
@@ -18,9 +19,9 @@ import {
   snapshotAssistantSignatures,
   waitForBatchDeadline,
 } from './dom';
+import { normalizeWaitMs } from './storage';
 
 const BATCH_SIZE = 3;
-const WAIT_MS = 90_000;
 const CAPTURE_TIMEOUT_MS = 45_000;
 const CAPTURE_STABLE_POLLS = 2;
 
@@ -93,6 +94,22 @@ export class ClassificacaoRunner {
     const top = Number(launcherTop);
     if (!Number.isFinite(top)) return;
     this.persist({ launcherTop: top });
+  }
+
+  getWaitMs() {
+    return normalizeWaitMs(this.state.waitMs);
+  }
+
+  updateWaitMs(waitMs) {
+    const normalized = normalizeWaitMs(waitMs);
+    const patch = { waitMs: normalized };
+
+    if (this.state.status !== 'running') {
+      patch.lastInfo = `Tempo de espera ajustado para ${formatDuration(normalized)}.`;
+    }
+
+    this.persist(patch);
+    return normalized;
   }
 
   updateDraftText(text) {
@@ -227,13 +244,16 @@ export class ClassificacaoRunner {
       await this.stop();
     }
 
+    const preservedHistory = Array.isArray(this.state.history)
+      ? this.state.history.map(entry => ({ ...entry }))
+      : [];
     const hasQueue = Array.isArray(this.state.queue) && this.state.queue.length > 0;
     this.persist({
       status: 'idle',
       running: false,
       paused: false,
       nextIndex: 0,
-      history: Array.isArray(this.state.history) ? [...this.state.history] : [],
+      history: preservedHistory,
       currentBatch: null,
       lastCapturedSignature: '',
       lastError: '',
@@ -389,6 +409,7 @@ export class ClassificacaoRunner {
         const promptText = buildBatchText(batch);
         const batchId = `batch_${Date.now()}_${cursor}`;
         const baselineSignatures = snapshotAssistantSignatures();
+        const waitMs = this.getWaitMs();
         const initialBatchState = {
           id: batchId,
           batchNumber,
@@ -398,10 +419,11 @@ export class ClassificacaoRunner {
           items: batch.map(item => item.text),
           promptText,
           baselineSignatures,
+          waitMs,
           phase: 'sending',
           sentAt: null,
           waitDeadlineAt: null,
-          remainingMs: WAIT_MS,
+          remainingMs: waitMs,
         };
 
         this.persist({
@@ -418,10 +440,11 @@ export class ClassificacaoRunner {
             ...this.state.currentBatch,
             phase: 'waiting',
             sentAt,
-            waitDeadlineAt: sentAt + WAIT_MS,
-            remainingMs: WAIT_MS,
+            waitMs,
+            waitDeadlineAt: sentAt + waitMs,
+            remainingMs: waitMs,
           },
-          lastInfo: `Lote ${batchNumber} enviado. Aguardando 90 segundos...`,
+          lastInfo: `Lote ${batchNumber} enviado. Aguardando ${formatDuration(waitMs)}...`,
         });
 
         await waitForBatchDeadline(this.state.currentBatch.waitDeadlineAt, signal, remaining => {

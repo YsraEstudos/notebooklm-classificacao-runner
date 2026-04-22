@@ -88,6 +88,9 @@ function ensureApp() {
         panel.setNotice(error?.message || String(error), 'error');
       }
     },
+    onWaitMsChange: waitMs => {
+      app.updateWaitMs(waitMs);
+    },
     onToggleCollapsed: collapsed => {
       app.setCollapsed(collapsed);
     },

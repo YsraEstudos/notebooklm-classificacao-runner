@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.9
+// @version      1.0.10
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -140,6 +140,14 @@
   }
   const STORAGE_KEY = "notebooklm_classificacao_runner_state_v1";
   const STORAGE_FALLBACK_PREFIX = "__nblm_classificacao_runner__";
+  const DEFAULT_WAIT_MS = 9e4;
+  const MIN_WAIT_MS = 5e3;
+  const MAX_WAIT_MS = 36e5;
+  function normalizeWaitMs(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return DEFAULT_WAIT_MS;
+    return Math.min(MAX_WAIT_MS, Math.max(MIN_WAIT_MS, Math.round(parsed)));
+  }
   function readRawStorage() {
     try {
       if (typeof GM_getValue === "function") {
@@ -168,10 +176,11 @@
   }
   function createDefaultState() {
     return {
-      version: 4,
+      version: 5,
       status: "idle",
       collapsed: false,
       launcherTop: 120,
+      waitMs: DEFAULT_WAIT_MS,
       draftText: "",
       loadedText: "",
       queue: [],
@@ -211,11 +220,15 @@
       state.nextIndex = Number.isFinite(state.nextIndex) ? state.nextIndex : 0;
       state.collapsed = Boolean(state.collapsed);
       state.launcherTop = Number.isFinite(state.launcherTop) ? state.launcherTop : 120;
+      state.waitMs = normalizeWaitMs(state.waitMs);
       state.status = ["idle", "running", "paused", "stopped", "done", "error"].includes(state.status) ? state.status : "idle";
       if (state.currentBatch && typeof state.currentBatch === "object") {
+        const currentWaitMs = normalizeWaitMs(state.currentBatch.waitMs);
         state.currentBatch = {
           ...state.currentBatch,
-          baselineSignatures: Array.isArray(state.currentBatch.baselineSignatures) ? state.currentBatch.baselineSignatures.map((signature) => String(signature)) : []
+          baselineSignatures: Array.isArray(state.currentBatch.baselineSignatures) ? state.currentBatch.baselineSignatures.map((signature) => String(signature)) : [],
+          waitMs: currentWaitMs,
+          remainingMs: Number.isFinite(state.currentBatch.remainingMs) ? state.currentBatch.remainingMs : currentWaitMs
         };
       } else {
         state.currentBatch = null;
@@ -797,7 +810,6 @@ ${entry.responseText}`;
     }
   }
   const BATCH_SIZE = 3;
-  const WAIT_MS = 9e4;
   const CAPTURE_TIMEOUT_MS = 45e3;
   const CAPTURE_STABLE_POLLS = 2;
   function formatError(error) {
@@ -860,6 +872,18 @@ ${entry.responseText}`;
       const top = Number(launcherTop);
       if (!Number.isFinite(top)) return;
       this.persist({ launcherTop: top });
+    }
+    getWaitMs() {
+      return normalizeWaitMs(this.state.waitMs);
+    }
+    updateWaitMs(waitMs) {
+      const normalized = normalizeWaitMs(waitMs);
+      const patch = { waitMs: normalized };
+      if (this.state.status !== "running") {
+        patch.lastInfo = `Tempo de espera ajustado para ${formatDuration(normalized)}.`;
+      }
+      this.persist(patch);
+      return normalized;
     }
     updateDraftText(text) {
       this.persist({ draftText: normalizeDisplayText(text) });
@@ -970,13 +994,14 @@ ${entry.responseText}`;
       if (this.state.status === "running" || this.state.status === "paused" || this.activePromise) {
         await this.stop();
       }
+      const preservedHistory = Array.isArray(this.state.history) ? this.state.history.map((entry) => ({ ...entry })) : [];
       const hasQueue = Array.isArray(this.state.queue) && this.state.queue.length > 0;
       this.persist({
         status: "idle",
         running: false,
         paused: false,
         nextIndex: 0,
-        history: Array.isArray(this.state.history) ? [...this.state.history] : [],
+        history: preservedHistory,
         currentBatch: null,
         lastCapturedSignature: "",
         lastError: "",
@@ -1094,6 +1119,7 @@ ${entry.responseText}`;
           const promptText = buildBatchText(batch);
           const batchId = `batch_${Date.now()}_${cursor}`;
           const baselineSignatures = snapshotAssistantSignatures();
+          const waitMs = this.getWaitMs();
           const initialBatchState = {
             id: batchId,
             batchNumber,
@@ -1103,10 +1129,11 @@ ${entry.responseText}`;
             items: batch.map((item) => item.text),
             promptText,
             baselineSignatures,
+            waitMs,
             phase: "sending",
             sentAt: null,
             waitDeadlineAt: null,
-            remainingMs: WAIT_MS
+            remainingMs: waitMs
           };
           this.persist({
             currentBatch: initialBatchState,
@@ -1120,10 +1147,11 @@ ${entry.responseText}`;
               ...this.state.currentBatch,
               phase: "waiting",
               sentAt,
-              waitDeadlineAt: sentAt + WAIT_MS,
-              remainingMs: WAIT_MS
+              waitMs,
+              waitDeadlineAt: sentAt + waitMs,
+              remainingMs: waitMs
             },
-            lastInfo: `Lote ${batchNumber} enviado. Aguardando 90 segundos...`
+            lastInfo: `Lote ${batchNumber} enviado. Aguardando ${formatDuration(waitMs)}...`
           });
           await waitForBatchDeadline(this.state.currentBatch.waitDeadlineAt, signal, (remaining) => {
             this.persist({
@@ -1304,6 +1332,7 @@ ${entry.responseText}`;
       onReset,
       onCopyAll,
       onCopyEntry,
+      onWaitMsChange,
       onToggleCollapsed,
       onLauncherTopChange,
       onImportFile,
@@ -1317,6 +1346,7 @@ ${entry.responseText}`;
       this.onReset = onReset;
       this.onCopyAll = onCopyAll;
       this.onCopyEntry = onCopyEntry;
+      this.onWaitMsChange = onWaitMsChange;
       this.onToggleCollapsed = onToggleCollapsed;
       this.onLauncherTopChange = onLauncherTopChange;
       this.onImportFile = onImportFile;
@@ -1328,6 +1358,7 @@ ${entry.responseText}`;
       this.launcherDragState = null;
       this.launcherDragCleanup = null;
       this.suppressLauncherClick = false;
+      this.ignoreWaitEvents = false;
       this.host = document.createElement("div");
       this.host.id = "nlm-classificacao-host";
       this.host.setAttribute("aria-live", "polite");
@@ -1652,6 +1683,68 @@ ${entry.responseText}`;
         flex: 1 1 112px;
       }
 
+      .nlm-wait-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 1 178px;
+        min-height: 40px;
+        padding: 8px 12px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        color: #e2e8f0;
+        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+      }
+
+      .nlm-wait-control:hover {
+        transform: translateY(-1px);
+        background: rgba(15, 23, 42, 0.62);
+        border-color: rgba(148, 163, 184, 0.26);
+      }
+
+      .nlm-wait-label {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(226, 232, 240, 0.7);
+        white-space: nowrap;
+      }
+
+      .nlm-wait-input {
+        width: 72px;
+        min-width: 64px;
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        border-radius: 10px;
+        padding: 6px 8px;
+        background: rgba(2, 6, 23, 0.72);
+        color: #f8fafc;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 800;
+        text-align: center;
+        outline: none;
+        appearance: textfield;
+      }
+
+      .nlm-wait-input::-webkit-outer-spin-button,
+      .nlm-wait-input::-webkit-inner-spin-button {
+        appearance: none;
+        margin: 0;
+      }
+
+      .nlm-wait-input:focus {
+        border-color: rgba(56, 189, 248, 0.8);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
+      }
+
+      .nlm-wait-unit {
+        font-size: 11px;
+        color: rgba(226, 232, 240, 0.56);
+        font-weight: 700;
+      }
+
       .nlm-btn {
         appearance: none;
         border: 0;
@@ -1906,7 +1999,7 @@ ${entry.responseText}`;
       const title = createElement("h2", "nlm-title");
       title.textContent = "Classificação em lotes";
       const subtitle = createElement("p", "nlm-subtitle");
-      subtitle.textContent = "JSON flexível, envio em blocos de 3 e histórico com cópia rápida.";
+      subtitle.textContent = "JSON flexível, envio em blocos de 3, espera ajustável e histórico com cópia rápida.";
       titleWrap.append(kicker, title, subtitle);
       const topActions = createElement("div", "nlm-top-actions");
       this.collapseButton = makeButton("Recolher", "ghost");
@@ -1921,7 +2014,24 @@ ${entry.responseText}`;
       this.startButton = makeButton("Start", "primary");
       this.pauseButton = makeButton("Pause", "warm");
       this.stopButton = makeButton("Stop", "danger");
+      this.waitControl = createElement("label", "nlm-wait-control");
+      this.waitControl.title = "Ajuste o tempo de espera em segundos antes de capturar a resposta";
+      this.waitLabel = createElement("span", "nlm-wait-label");
+      this.waitLabel.textContent = "Espera";
+      this.waitInput = createElement("input", "nlm-wait-input");
+      this.waitInput.type = "number";
+      this.waitInput.min = "5";
+      this.waitInput.max = "3600";
+      this.waitInput.step = "5";
+      this.waitInput.inputMode = "numeric";
+      this.waitInput.autocomplete = "off";
+      this.waitInput.spellcheck = false;
+      this.waitInput.setAttribute("aria-label", "Tempo de espera em segundos");
+      this.waitUnit = createElement("span", "nlm-wait-unit");
+      this.waitUnit.textContent = "s";
+      this.waitControl.append(this.waitLabel, this.waitInput, this.waitUnit);
       this.resetButton = makeButton("Zerar progresso", "ghost");
+      this.resetButton.title = "Voltar a fila ao item 1 sem apagar o histórico";
       this.copyAllButton = makeButton("Copiar tudo", "secondary");
       this.downloadExampleButton = makeButton("Exemplo", "ghost");
       this.importFileButton = makeButton("Arquivo", "ghost");
@@ -1930,6 +2040,7 @@ ${entry.responseText}`;
         this.startButton,
         this.pauseButton,
         this.stopButton,
+        this.waitControl,
         this.resetButton,
         this.copyAllButton,
         this.downloadExampleButton,
@@ -1990,7 +2101,7 @@ ${entry.responseText}`;
       this.footerText = createElement("div", "nlm-muted");
       this.footerText.textContent = "Esc pausa e recolhe o painel";
       this.footerInfo = createElement("div", "nlm-muted");
-      this.footerInfo.textContent = "90s por lote";
+      this.footerInfo.textContent = "Espera configurável";
       footer.append(this.footerText, this.footerInfo);
       return footer;
     }
@@ -2051,6 +2162,19 @@ ${entry.responseText}`;
       this.importFileButton.addEventListener("click", () => {
         var _a;
         return (_a = this.fileInput) == null ? void 0 : _a.click();
+      });
+      this.waitInput.addEventListener("input", () => {
+        var _a;
+        if (this.ignoreWaitEvents) return;
+        const seconds = Number(this.waitInput.value);
+        if (!Number.isFinite(seconds) || seconds <= 0) return;
+        (_a = this.onWaitMsChange) == null ? void 0 : _a.call(this, seconds * 1e3);
+      });
+      this.waitInput.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+        }
       });
       this.railButton.addEventListener("pointerdown", (event) => {
         var _a, _b;
@@ -2259,9 +2383,15 @@ ${entry.responseText}`;
       if (this.shadow.activeElement !== this.textarea) {
         this.setEditorValue(state.draftText || "");
       }
+      const waitMs = Number.isFinite(state.waitMs) ? state.waitMs : 9e4;
+      const waitSeconds = Math.max(1, Math.round(waitMs / 1e3));
+      if (this.shadow.activeElement !== this.waitInput) {
+        this.waitInput.value = String(waitSeconds);
+      }
       this.renderHistory(state.history || []);
       this.footerText.textContent = state.collapsed ? "Botão flutuante recolhido. Arraste para mudar de posição." : "Esc pausa e recolhe o painel.";
-      this.footerInfo.textContent = state.status === "running" && (current == null ? void 0 : current.phase) === "waiting" ? `Aguardando: ${formatDuration(current.remainingMs ?? 0)}` : `90s por lote · ${formatDateTime(state.updatedAt) || "sem data"}`;
+      const configuredWait = formatDuration(waitMs);
+      this.footerInfo.textContent = state.status === "running" && (current == null ? void 0 : current.phase) === "waiting" ? `Aguardando: ${formatDuration(current.remainingMs ?? 0)} · base ${configuredWait}` : `${configuredWait} por lote · ${formatDateTime(state.updatedAt) || "sem data"}`;
     }
     renderHistory(history) {
       const nodes = [];
@@ -2380,6 +2510,9 @@ ${entry.responseText}`;
         } catch (error) {
           panel.setNotice((error == null ? void 0 : error.message) || String(error), "error");
         }
+      },
+      onWaitMsChange: (waitMs) => {
+        app.updateWaitMs(waitMs);
       },
       onToggleCollapsed: (collapsed) => {
         app.setCollapsed(collapsed);

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildHistoryClipboardText, createExampleJson, parseQueueFromJson } from '../src/storage';
+import {
+  buildHistoryClipboardText,
+  createDefaultState,
+  createExampleJson,
+  loadState,
+  parseQueueFromJson,
+  saveState,
+} from '../src/storage';
 
 describe('storage helpers', () => {
   it('parses arrays and object-backed queues', () => {
@@ -40,5 +47,17 @@ describe('storage helpers', () => {
     expect(clipboard).toContain('Resposta 1');
     expect(clipboard).toContain('=== LOTE 2 (4-6) ===');
     expect(clipboard).toContain('Resposta 2');
+  });
+
+  it('persists the configurable wait time in storage', () => {
+    expect(createDefaultState().waitMs).toBe(90_000);
+
+    saveState({
+      ...createDefaultState(),
+      waitMs: '120000',
+    });
+
+    const state = loadState();
+    expect(state.waitMs).toBe(120_000);
   });
 });

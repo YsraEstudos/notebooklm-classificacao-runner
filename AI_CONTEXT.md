@@ -15,8 +15,14 @@ Release checklist:
 1. Bump the version.
 2. Rebuild.
 3. Commit the generated `dist/` files.
-4. Push to GitHub.
+4. Push directly to `main` on GitHub unless the user explicitly asks for a PR.
 5. Verify the raw `meta.js` and `user.js` URLs return `200`.
+
+Publication rule:
+
+- Do not open a PR by default for this project.
+- If a temporary branch is used during local work, merge or fast-forward it into `main` before publishing.
+- Only create a PR when the user explicitly requests one.
 
 Live NotebookLM contract:
 
