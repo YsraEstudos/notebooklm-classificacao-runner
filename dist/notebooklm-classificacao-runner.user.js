@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.6
+// @version      1.0.7
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -1256,8 +1256,8 @@ ${entry.responseText}`;
         this.history,
         this.footer
       );
-      this.panel.append(this.content, this.rail);
-      this.shell.append(this.panel);
+      this.panel.append(this.content);
+      this.shell.append(this.panel, this.rail);
       this.shadow.append(this.shell);
       this.bindEvents();
       this.applyLauncherTop(this.launcherTop, { persist: false });

@@ -18,10 +18,13 @@ describe('launcher UI', () => {
     const shell = panel.shadow.querySelector('.nlm-shell');
     const rail = panel.shadow.querySelector('.nlm-rail');
     const button = panel.shadow.querySelector('.nlm-rail-button');
+    const panelNode = panel.shadow.querySelector('.nlm-panel');
 
     expect(shell.classList.contains('is-collapsed')).toBe(true);
     expect(rail).not.toBeNull();
     expect(button).not.toBeNull();
+    expect(panelNode.contains(rail)).toBe(false);
+    expect(shell.contains(rail)).toBe(true);
     expect(button.textContent).toContain('NLM');
     expect(button.getAttribute('aria-hidden')).toBe('false');
 
