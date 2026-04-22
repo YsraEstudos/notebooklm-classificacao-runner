@@ -13,6 +13,7 @@ export default defineConfig({
         name: 'NotebookLM Classificacao Runner',
         namespace: 'npm/vite-plugin-monkey',
         match: ['https://notebooklm.google.com/*'],
+        'run-at': 'document-idle',
         grant: ['GM_getValue', 'GM_setValue', 'GM_setClipboard'],
         homepageURL: `https://github.com/${repoOwner}/${repoName}`,
         supportURL: `https://github.com/${repoOwner}/${repoName}/issues`,

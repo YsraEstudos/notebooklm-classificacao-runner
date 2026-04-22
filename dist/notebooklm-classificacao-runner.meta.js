@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.0
+// @version      1.0.1
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -13,4 +13,5 @@
 // @grant        GM_getValue
 // @grant        GM_setClipboard
 // @grant        GM_setValue
+// @run-at       document-idle
 // ==/UserScript==

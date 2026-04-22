@@ -6,6 +6,8 @@ const COMPOSE_SELECTORS = [
   'textarea[placeholder*="Comece a digitar"]',
   'textarea[placeholder*="digitar"]',
   'textarea',
+  '[contenteditable="true"]',
+  '[role="textbox"]',
 ];
 
 const SEND_BUTTON_SELECTORS = [
@@ -29,6 +31,33 @@ const RESPONSE_CARD_SELECTORS = [
   '.response',
 ];
 
+function queryAllDeep(selector, root = document) {
+  const results = [];
+  const seen = new Set();
+  const roots = [root];
+
+  while (roots.length) {
+    const currentRoot = roots.pop();
+    if (!currentRoot || typeof currentRoot.querySelectorAll !== 'function') continue;
+
+    const matches = currentRoot.querySelectorAll(selector);
+    for (const element of matches) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+      results.push(element);
+    }
+
+    const allElements = currentRoot.querySelectorAll('*');
+    for (const element of allElements) {
+      if (element.shadowRoot) {
+        roots.push(element.shadowRoot);
+      }
+    }
+  }
+
+  return results;
+}
+
 function isVisible(element) {
   if (!element || element.nodeType !== 1) return false;
   const style = window.getComputedStyle(element);
@@ -37,7 +66,27 @@ function isVisible(element) {
 }
 
 function isInsideShadowPanel(element) {
-  return Boolean(element?.closest?.('#nlm-classificacao-panel, #nlm-classificacao-rail'));
+  let current = element;
+
+  while (current) {
+    if (
+      current.id === 'nlm-classificacao-host' ||
+      current.id === 'nlm-classificacao-panel' ||
+      current.id === 'nlm-classificacao-rail'
+    ) {
+      return true;
+    }
+
+    const root = current.getRootNode?.();
+    if (root && root.host) {
+      current = root.host;
+      continue;
+    }
+
+    current = current.parentElement;
+  }
+
+  return false;
 }
 
 function labelMatches(element, patterns) {
@@ -55,8 +104,8 @@ function firstVisibleMatch(list, predicates) {
 }
 
 export function getComposeTextarea() {
-  const textareas = [...document.querySelectorAll('textarea')];
-  return firstVisibleMatch(textareas, [
+  const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
+  return firstVisibleMatch(editors, [
     element => COMPOSE_SELECTORS.some(selector => {
       try {
         return element.matches(selector);
@@ -68,7 +117,7 @@ export function getComposeTextarea() {
 }
 
 export function getSendButton() {
-  const buttons = [...document.querySelectorAll('button')];
+  const buttons = queryAllDeep('button, [role="button"]');
   return firstVisibleMatch(buttons, [
     element => SEND_BUTTON_SELECTORS.some(selector => {
       try {
@@ -82,12 +131,25 @@ export function getSendButton() {
 
 export function setTextareaValue(textarea, value) {
   const text = String(value ?? '');
-  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
 
-  if (nativeSetter) {
-    nativeSetter.call(textarea, text);
-  } else {
+  const isTextInput = textarea instanceof HTMLTextAreaElement || textarea instanceof HTMLInputElement;
+  const isContentEditable = textarea?.isContentEditable || textarea?.getAttribute?.('contenteditable') === 'true';
+
+  if (isTextInput) {
+    const nativeSetter = Object.getOwnPropertyDescriptor(isTextInput && textarea instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, 'value')?.set;
+
+    if (nativeSetter) {
+      nativeSetter.call(textarea, text);
+    } else {
+      textarea.value = text;
+    }
+  } else if (isContentEditable) {
+    textarea.focus();
+    textarea.textContent = text;
+  } else if ('value' in textarea) {
     textarea.value = text;
+  } else {
+    textarea.textContent = text;
   }
 
   textarea.dispatchEvent(new InputEvent('input', {
@@ -105,7 +167,10 @@ export function setTextareaValue(textarea, value) {
   }));
 
   textarea.focus();
-  textarea.setSelectionRange(text.length, text.length);
+
+  if (typeof textarea.setSelectionRange === 'function') {
+    textarea.setSelectionRange(text.length, text.length);
+  }
 }
 
 export function clickTouchTarget(button) {
@@ -173,7 +238,7 @@ function collectResponseCandidates() {
   const candidates = [];
   const seen = new Set();
 
-  const copyButtons = [...document.querySelectorAll('button')].filter(button => {
+  const copyButtons = queryAllDeep('button, [role="button"]').filter(button => {
     if (!isVisible(button) || isInsideShadowPanel(button)) return false;
     return labelMatches(button, [/copi/, /copy/]);
   });
@@ -186,7 +251,7 @@ function collectResponseCandidates() {
     }
   }
 
-  const genericCards = [...document.querySelectorAll(selector)].filter(element => {
+  const genericCards = queryAllDeep(selector).filter(element => {
     if (!isVisible(element) || isInsideShadowPanel(element)) return false;
     const text = extractResponseText(element);
     return text.length >= 20;

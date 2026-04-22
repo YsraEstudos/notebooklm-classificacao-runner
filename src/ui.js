@@ -61,6 +61,7 @@ export class ClassificacaoPanel {
 
     this.shell = createElement('div', 'nlm-shell');
     this.panel = createElement('aside', 'nlm-panel');
+    this.panel.id = 'nlm-classificacao-panel';
     this.rail = createElement('div', 'nlm-rail');
     this.rail.id = 'nlm-classificacao-rail';
 
@@ -86,8 +87,6 @@ export class ClassificacaoPanel {
     this.panel.append(this.content, this.rail);
     this.shell.append(this.panel);
     this.shadow.append(this.shell);
-
-    document.body.appendChild(this.host);
     this.bindEvents();
   }
 
@@ -675,6 +674,7 @@ export class ClassificacaoPanel {
   }
 
   mount() {
+    if (!document.body) return;
     if (!document.body.contains(this.host)) {
       document.body.appendChild(this.host);
     }

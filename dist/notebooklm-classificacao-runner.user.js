@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.0
+// @version      1.0.1
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -13,6 +13,7 @@
 // @grant        GM_getValue
 // @grant        GM_setClipboard
 // @grant        GM_setValue
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
@@ -287,7 +288,9 @@ ${entry.responseText}`;
     'textarea[aria-label*="consulta"]',
     'textarea[placeholder*="Comece a digitar"]',
     'textarea[placeholder*="digitar"]',
-    "textarea"
+    "textarea",
+    '[contenteditable="true"]',
+    '[role="textbox"]'
   ];
   const SEND_BUTTON_SELECTORS = [
     'button[aria-label="Enviar"]',
@@ -308,6 +311,28 @@ ${entry.responseText}`;
     ".assistant-message",
     ".response"
   ];
+  function queryAllDeep(selector, root = document) {
+    const results = [];
+    const seen = /* @__PURE__ */ new Set();
+    const roots = [root];
+    while (roots.length) {
+      const currentRoot = roots.pop();
+      if (!currentRoot || typeof currentRoot.querySelectorAll !== "function") continue;
+      const matches = currentRoot.querySelectorAll(selector);
+      for (const element of matches) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        results.push(element);
+      }
+      const allElements = currentRoot.querySelectorAll("*");
+      for (const element of allElements) {
+        if (element.shadowRoot) {
+          roots.push(element.shadowRoot);
+        }
+      }
+    }
+    return results;
+  }
   function isVisible(element) {
     if (!element || element.nodeType !== 1) return false;
     const style = window.getComputedStyle(element);
@@ -316,7 +341,19 @@ ${entry.responseText}`;
   }
   function isInsideShadowPanel(element) {
     var _a;
-    return Boolean((_a = element == null ? void 0 : element.closest) == null ? void 0 : _a.call(element, "#nlm-classificacao-panel, #nlm-classificacao-rail"));
+    let current = element;
+    while (current) {
+      if (current.id === "nlm-classificacao-host" || current.id === "nlm-classificacao-panel" || current.id === "nlm-classificacao-rail") {
+        return true;
+      }
+      const root = (_a = current.getRootNode) == null ? void 0 : _a.call(current);
+      if (root && root.host) {
+        current = root.host;
+        continue;
+      }
+      current = current.parentElement;
+    }
+    return false;
   }
   function labelMatches(element, patterns) {
     const label = `${element.getAttribute("aria-label") || ""} ${element.textContent || ""}`.toLowerCase();
@@ -331,8 +368,8 @@ ${entry.responseText}`;
     return null;
   }
   function getComposeTextarea() {
-    const textareas = [...document.querySelectorAll("textarea")];
-    return firstVisibleMatch(textareas, [
+    const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
+    return firstVisibleMatch(editors, [
       (element) => COMPOSE_SELECTORS.some((selector) => {
         try {
           return element.matches(selector);
@@ -343,7 +380,7 @@ ${entry.responseText}`;
     ]);
   }
   function getSendButton() {
-    const buttons = [...document.querySelectorAll("button")];
+    const buttons = queryAllDeep('button, [role="button"]');
     return firstVisibleMatch(buttons, [
       (element) => SEND_BUTTON_SELECTORS.some((selector) => {
         try {
@@ -355,13 +392,24 @@ ${entry.responseText}`;
     ]);
   }
   function setTextareaValue(textarea, value) {
-    var _a;
+    var _a, _b;
     const text = String(value ?? "");
-    const nativeSetter = (_a = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")) == null ? void 0 : _a.set;
-    if (nativeSetter) {
-      nativeSetter.call(textarea, text);
-    } else {
+    const isTextInput = textarea instanceof HTMLTextAreaElement || textarea instanceof HTMLInputElement;
+    const isContentEditable = (textarea == null ? void 0 : textarea.isContentEditable) || ((_a = textarea == null ? void 0 : textarea.getAttribute) == null ? void 0 : _a.call(textarea, "contenteditable")) === "true";
+    if (isTextInput) {
+      const nativeSetter = (_b = Object.getOwnPropertyDescriptor(isTextInput && textarea instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, "value")) == null ? void 0 : _b.set;
+      if (nativeSetter) {
+        nativeSetter.call(textarea, text);
+      } else {
+        textarea.value = text;
+      }
+    } else if (isContentEditable) {
+      textarea.focus();
+      textarea.textContent = text;
+    } else if ("value" in textarea) {
       textarea.value = text;
+    } else {
+      textarea.textContent = text;
     }
     textarea.dispatchEvent(new InputEvent("input", {
       bubbles: true,
@@ -376,7 +424,9 @@ ${entry.responseText}`;
       composed: true
     }));
     textarea.focus();
-    textarea.setSelectionRange(text.length, text.length);
+    if (typeof textarea.setSelectionRange === "function") {
+      textarea.setSelectionRange(text.length, text.length);
+    }
   }
   function clickTouchTarget(button) {
     var _a;
@@ -433,7 +483,7 @@ ${entry.responseText}`;
     const selector = RESPONSE_CARD_SELECTORS.join(",");
     const candidates = [];
     const seen = /* @__PURE__ */ new Set();
-    const copyButtons = [...document.querySelectorAll("button")].filter((button) => {
+    const copyButtons = queryAllDeep('button, [role="button"]').filter((button) => {
       if (!isVisible(button) || isInsideShadowPanel(button)) return false;
       return labelMatches(button, [/copi/, /copy/]);
     });
@@ -444,7 +494,7 @@ ${entry.responseText}`;
         seen.add(card);
       }
     }
-    const genericCards = [...document.querySelectorAll(selector)].filter((element) => {
+    const genericCards = queryAllDeep(selector).filter((element) => {
       if (!isVisible(element) || isInsideShadowPanel(element)) return false;
       const text = extractResponseText(element);
       return text.length >= 20;
@@ -921,6 +971,7 @@ ${entry.responseText}`;
       this.shadow.appendChild(style);
       this.shell = createElement("div", "nlm-shell");
       this.panel = createElement("aside", "nlm-panel");
+      this.panel.id = "nlm-classificacao-panel";
       this.rail = createElement("div", "nlm-rail");
       this.rail.id = "nlm-classificacao-rail";
       this.content = createElement("div", "nlm-content");
@@ -943,7 +994,6 @@ ${entry.responseText}`;
       this.panel.append(this.content, this.rail);
       this.shell.append(this.panel);
       this.shadow.append(this.shell);
-      document.body.appendChild(this.host);
       this.bindEvents();
     }
     buildStyles() {
@@ -1532,6 +1582,7 @@ ${entry.responseText}`;
       this.shadow.appendChild(this.fileInput);
     }
     mount() {
+      if (!document.body) return;
       if (!document.body.contains(this.host)) {
         document.body.appendChild(this.host);
       }
