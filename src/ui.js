@@ -1023,7 +1023,7 @@ export class ClassificacaoPanel {
     this.startButton.disabled = state.status === 'running';
     this.stopButton.disabled = !(state.status === 'running' || state.status === 'paused' || state.status === 'stopped');
     this.resetButton.disabled = !loadedCount && historyCount === 0 && !current;
-    this.copyAllButton.disabled = historyCount === 0;
+    this.copyAllButton.disabled = false;
 
     if (state.lastError) {
       this.setNotice(state.lastError, 'error');

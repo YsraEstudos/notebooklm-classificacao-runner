@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.7
+// @version      1.0.9
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -168,7 +168,7 @@
   }
   function createDefaultState() {
     return {
-      version: 2,
+      version: 4,
       status: "idle",
       collapsed: false,
       launcherTop: 120,
@@ -185,6 +185,18 @@
       updatedAt: Date.now()
     };
   }
+  function normalizeHistoryEntry(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    return {
+      ...entry,
+      responseText: normalizeDisplayText(entry.responseText || ""),
+      responseSignature: entry.responseSignature ? String(entry.responseSignature) : "",
+      messageIndex: Number.isFinite(entry.messageIndex) ? entry.messageIndex : null,
+      responseSource: entry.responseSource ? String(entry.responseSource) : "dom",
+      capturedFromDomAt: entry.capturedFromDomAt ? String(entry.capturedFromDomAt) : "",
+      reconciledAt: entry.reconciledAt ? String(entry.reconciledAt) : ""
+    };
+  }
   function loadState() {
     const raw = readRawStorage();
     if (!raw) return createDefaultState();
@@ -195,7 +207,7 @@
         ...parsed
       };
       state.queue = Array.isArray(state.queue) ? state.queue : [];
-      state.history = Array.isArray(state.history) ? state.history : [];
+      state.history = Array.isArray(state.history) ? state.history.map(normalizeHistoryEntry).filter(Boolean) : [];
       state.nextIndex = Number.isFinite(state.nextIndex) ? state.nextIndex : 0;
       state.collapsed = Boolean(state.collapsed);
       state.launcherTop = Number.isFinite(state.launcherTop) ? state.launcherTop : 120;
@@ -278,7 +290,7 @@
     return batchItems.map((item, index) => `${index + 1}. ${item.text}`).join("\n\n");
   }
   function buildHistoryClipboardText(history) {
-    return history.map((entry, index) => {
+    return history.filter((entry) => normalizeDisplayText((entry == null ? void 0 : entry.responseText) || "")).map((entry, index) => {
       const title = `LOTE ${index + 1} (${entry.startIndex + 1}-${entry.endIndex + 1})`;
       return `=== ${title} ===
 ${entry.responseText}`;
@@ -295,6 +307,11 @@ ${entry.responseText}`;
       { text: "Sétimo item de exemplo para fechar o lote final." }
     ], null, 2);
   }
+  const USER_CARD_SELECTOR = "mat-card.from-user-message-card-content, .from-user-message-card-content";
+  const ASSISTANT_CARD_SELECTOR = "mat-card.to-user-message-card-content, .to-user-message-card-content";
+  const CHAT_PANEL_SELECTOR = ".chat-panel-content";
+  const TRANSCRIPT_CONTAINER_SELECTOR = ".chat-message-pair, .chat-panel-empty-state";
+  const PENDING_RESPONSE_PATTERN = /^(reading full chapters|thinking|carregando|lendo)(\.{0,3})?$/i;
   function queryAllDeep(selector, root = document) {
     const results = [];
     const seen = /* @__PURE__ */ new Set();
@@ -346,10 +363,6 @@ ${entry.responseText}`;
       current = current.parentElement;
     }
     return false;
-  }
-  function labelMatches(element, patterns) {
-    const label = `${element.getAttribute("aria-label") || ""} ${element.textContent || ""}`.toLowerCase();
-    return patterns.some((pattern) => pattern.test(label));
   }
   function getComposeScore(element) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
@@ -421,6 +434,154 @@ ${entry.responseText}`;
     candidates.sort((a, b) => b.score - a.score);
     return ((_a = candidates[0]) == null ? void 0 : _a.element) || null;
   }
+  function isEnabledButton(element) {
+    var _a, _b;
+    if (!element) return false;
+    if (element.disabled) return false;
+    if ((_a = element.matches) == null ? void 0 : _a.call(element, '[disabled], [aria-disabled="true"], .mat-mdc-button-disabled')) return false;
+    if (((_b = element.getAttribute) == null ? void 0 : _b.call(element, "aria-disabled")) === "true") return false;
+    return true;
+  }
+  function getChatPanelRoot() {
+    return queryAllDeep(CHAT_PANEL_SELECTOR).find((element) => isVisible(element) && !isInsideShadowPanel(element)) || null;
+  }
+  function findMessageBodyNode(element, selectors) {
+    var _a, _b;
+    for (const selector of selectors) {
+      if ((_a = element.matches) == null ? void 0 : _a.call(element, selector)) return element;
+      const nested = (_b = element.querySelector) == null ? void 0 : _b.call(element, selector);
+      if (nested) return nested;
+    }
+    return element;
+  }
+  function cloneWithoutControls(element) {
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll([
+      "button",
+      '[role="button"]',
+      "input",
+      "textarea",
+      "script",
+      "style",
+      "svg",
+      "mat-icon",
+      "mat-card-actions",
+      "chat-actions",
+      ".message-actions",
+      ".actions-container",
+      ".action",
+      ".pin-button",
+      ".xap-copy-to-clipboard",
+      ".suggestions-container",
+      "follow-up",
+      ".follow-up-chip",
+      ".follow-up-vertical-container",
+      ".chat-panel-empty-state-action-bar",
+      ".mat-mdc-button-touch-target",
+      '[aria-hidden="true"]',
+      "chat-panel-header"
+    ].join(", ")).forEach((node) => node.remove());
+    return clone;
+  }
+  function extractTextFromNode(node) {
+    if (!node) return "";
+    const clone = cloneWithoutControls(node);
+    const extracted = normalizeDisplayText(clone.innerText || clone.textContent || "");
+    if (extracted) return extracted;
+    return normalizeDisplayText(node.innerText || node.textContent || "");
+  }
+  function createTranscriptItem({ element, kind, messageIndex, source = "dom" }) {
+    if (!element) return null;
+    const bodyNode = kind === "assistant" ? findMessageBodyNode(element, [
+      ".message-content.to-user-message-inner-content",
+      ".to-user-message-inner-content",
+      ".message-content"
+    ]) : kind === "user" ? findMessageBodyNode(element, [
+      ".message-content.from-user-message-inner-content",
+      ".from-user-message-inner-content",
+      ".message-content"
+    ]) : findMessageBodyNode(element, [
+      ".notebook-summary",
+      ".summary-content",
+      ".chat-panel-empty-state"
+    ]);
+    const text = extractTextFromNode(bodyNode);
+    if (!text) return null;
+    return {
+      element,
+      bodyNode,
+      text,
+      signature: stableHash(normalizeSignatureText(text)),
+      messageIndex,
+      kind,
+      source
+    };
+  }
+  function collectTranscriptContainers(root) {
+    if (!root) return [];
+    const containers = [...root.querySelectorAll(TRANSCRIPT_CONTAINER_SELECTOR)];
+    if (containers.length > 0) return containers;
+    const standalone = [];
+    const summary = root.querySelector(".chat-panel-empty-state");
+    if (summary) standalone.push(summary);
+    queryAllDeep(`${USER_CARD_SELECTOR}, ${ASSISTANT_CARD_SELECTOR}`, root).forEach((element) => {
+      if (!standalone.includes(element)) standalone.push(element);
+    });
+    return standalone;
+  }
+  function collectTranscriptItems() {
+    var _a, _b, _c, _d, _e;
+    const root = getChatPanelRoot();
+    if (!root) return [];
+    const items = [];
+    let userIndex = 0;
+    let assistantIndex = 0;
+    let summaryIndex = 0;
+    for (const container of collectTranscriptContainers(root)) {
+      if ((_a = container.matches) == null ? void 0 : _a.call(container, ".chat-panel-empty-state")) {
+        const summaryItem = createTranscriptItem({
+          element: container,
+          kind: "summary",
+          messageIndex: summaryIndex
+        });
+        if (summaryItem) {
+          items.push(summaryItem);
+          summaryIndex += 1;
+        }
+        continue;
+      }
+      const userCard = ((_b = container.matches) == null ? void 0 : _b.call(container, USER_CARD_SELECTOR)) ? container : (_c = container.querySelector) == null ? void 0 : _c.call(container, USER_CARD_SELECTOR);
+      if (userCard) {
+        const userItem = createTranscriptItem({
+          element: userCard,
+          kind: "user",
+          messageIndex: userIndex
+        });
+        if (userItem) {
+          items.push(userItem);
+          userIndex += 1;
+        }
+      }
+      const assistantCard = ((_d = container.matches) == null ? void 0 : _d.call(container, ASSISTANT_CARD_SELECTOR)) ? container : (_e = container.querySelector) == null ? void 0 : _e.call(container, ASSISTANT_CARD_SELECTOR);
+      if (assistantCard) {
+        const assistantItem = createTranscriptItem({
+          element: assistantCard,
+          kind: "assistant",
+          messageIndex: assistantIndex
+        });
+        if (assistantItem) {
+          items.push(assistantItem);
+          assistantIndex += 1;
+        }
+      }
+    }
+    return items;
+  }
+  function isLikelyPendingAssistantText(text) {
+    const normalized = normalizeDisplayText(text);
+    if (!normalized) return true;
+    return PENDING_RESPONSE_PATTERN.test(normalized);
+  }
   function getComposeContext() {
     var _a;
     const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
@@ -439,14 +600,6 @@ ${entry.responseText}`;
     }
     candidates.sort((a, b) => b.score - a.score);
     return candidates[0] || null;
-  }
-  function isEnabledButton(element) {
-    var _a, _b;
-    if (!element) return false;
-    if (element.disabled) return false;
-    if ((_a = element.matches) == null ? void 0 : _a.call(element, '[disabled], [aria-disabled="true"], .mat-mdc-button-disabled')) return false;
-    if (((_b = element.getAttribute) == null ? void 0 : _b.call(element, "aria-disabled")) === "true") return false;
-    return true;
   }
   function getComposeTextarea() {
     var _a;
@@ -513,20 +666,6 @@ ${entry.responseText}`;
       textarea.setSelectionRange(text.length, text.length);
     }
   }
-  function clickTouchTarget(button) {
-    var _a;
-    if (!button) return false;
-    const touchTarget = (_a = button.querySelector) == null ? void 0 : _a.call(button, ".mat-mdc-button-touch-target");
-    if (touchTarget && typeof touchTarget.click === "function") {
-      touchTarget.click();
-      return true;
-    }
-    if (typeof button.click === "function") {
-      button.click();
-      return true;
-    }
-    return false;
-  }
   async function waitForComposeTextarea(signal) {
     return waitFor(() => getComposeTextarea(), { timeoutMs: 2e4, intervalMs: 250, signal });
   }
@@ -591,151 +730,48 @@ ${entry.responseText}`;
     }
     return true;
   }
-  function cloneWithoutControls(element) {
-    const clone = element.cloneNode(true);
-    clone.querySelectorAll([
-      "button",
-      '[role="button"]',
-      "input",
-      "textarea",
-      "script",
-      "style",
-      "svg",
-      "mat-icon",
-      ".mat-mdc-button-touch-target",
-      '[aria-hidden="true"]',
-      "chat-panel-header",
-      ".chat-panel-empty-state-action-bar",
-      ".suggestions-container"
-    ].join(", ")).forEach((node) => node.remove());
-    return clone;
-  }
-  function getResponseRootElement(element) {
-    var _a, _b;
-    if (!element) return null;
-    if ((_a = element.matches) == null ? void 0 : _a.call(element, ".notebook-summary")) return element;
-    const directSummary = (_b = element.querySelector) == null ? void 0 : _b.call(element, ".notebook-summary");
-    if (directSummary) return directSummary;
-    return element;
-  }
-  function getResponseContainerFromButton(button) {
-    var _a, _b, _c;
-    const selector = [
-      ".notebook-summary",
-      ".chat-panel-empty-state",
-      ".chat-panel-content",
-      ".chat-panel-response",
-      ".chat-panel-message",
-      "note-card",
-      ".note-card",
-      "mat-card",
-      "article",
-      '[role="article"]',
-      '[data-testid*="response"]',
-      '[data-testid*="answer"]',
-      '[data-testid*="note"]',
-      ".message",
-      ".answer",
-      ".assistant-message",
-      ".response"
-    ].join(", ");
-    const card = (_a = button.closest) == null ? void 0 : _a.call(button, selector);
-    if (card) return card;
-    let current = button.parentElement;
-    while (current && current !== document.body) {
-      if ((_b = current.matches) == null ? void 0 : _b.call(current, "section, article, mat-card, div, note-card, chat-panel-content, chat-panel")) {
-        const summaryNode = (_c = current.querySelector) == null ? void 0 : _c.call(current, ".notebook-summary");
-        const text = normalizeDisplayText((summaryNode == null ? void 0 : summaryNode.textContent) || current.textContent || "");
-        if (text.length >= 20) return current;
-      }
-      current = current.parentElement;
+  function collectAssistantMessages({ includeSummaryFallback = true } = {}) {
+    const transcript = collectTranscriptItems();
+    const assistantMessages = transcript.filter((item) => item.kind === "assistant");
+    if (assistantMessages.length > 0) {
+      return assistantMessages.filter((item) => !isLikelyPendingAssistantText(item.text));
     }
-    return button.parentElement || button;
+    if (!includeSummaryFallback) return [];
+    return transcript.filter((item) => item.kind === "summary");
   }
-  function extractResponseText(element) {
-    if (!element) return "";
-    const source = getResponseRootElement(element);
-    const clone = cloneWithoutControls(source);
-    const extracted = normalizeDisplayText(clone.innerText || clone.textContent || "");
-    if (extracted) return extracted;
-    return normalizeDisplayText(source.innerText || source.textContent || "");
+  function snapshotAssistantSignatures(options) {
+    return [...new Set(collectAssistantMessages(options).map((message) => message.signature).filter(Boolean))];
   }
-  function getCandidateSignature(element) {
-    return stableHash(normalizeSignatureText(extractResponseText(element)));
-  }
-  function getCardContainerFromButton(button) {
-    return getResponseContainerFromButton(button);
-  }
-  function collectResponseCandidates() {
-    const candidates = [];
-    const seen = /* @__PURE__ */ new Set();
-    const addCandidate = (element) => {
-      if (!element || seen.has(element) || !isVisible(element) || isInsideShadowPanel(element)) return;
-      const text = extractResponseText(element);
-      if (text.length < 20) return;
-      candidates.push(element);
-      seen.add(element);
-    };
-    queryAllDeep(".notebook-summary").forEach(addCandidate);
-    queryAllDeep('button, [role="button"]').filter((button) => {
-      if (!isVisible(button) || isInsideShadowPanel(button)) return false;
-      return labelMatches(button, [/copi/, /copy/]);
-    }).forEach((button) => {
-      const card = getCardContainerFromButton(button);
-      addCandidate(card);
-    });
-    queryAllDeep([
-      ".chat-panel-empty-state",
-      ".chat-panel-content",
-      ".chat-panel-response",
-      ".chat-panel-message",
-      "note-card",
-      ".note-card",
-      "mat-card",
-      "article",
-      '[role="article"]',
-      '[data-testid*="response"]',
-      '[data-testid*="answer"]',
-      '[data-testid*="note"]',
-      ".message",
-      ".answer",
-      ".assistant-message",
-      ".response"
-    ].join(",")).forEach(addCandidate);
-    return candidates;
-  }
-  function snapshotResponseSignatures() {
-    return [...new Set(collectResponseCandidates().map((candidate) => getCandidateSignature(candidate)).filter(Boolean))];
-  }
-  function findLatestResponseCandidate({ excludeSignatures = /* @__PURE__ */ new Set() } = {}) {
-    var _a;
-    const candidates = collectResponseCandidates();
+  function findLatestAssistantMessage({ excludeSignatures = /* @__PURE__ */ new Set(), includeSummaryFallback = true } = {}) {
+    const candidates = collectAssistantMessages({ includeSummaryFallback });
     for (let index = candidates.length - 1; index >= 0; index -= 1) {
       const candidate = candidates[index];
-      const text = extractResponseText(candidate);
-      if (text.length < 20) continue;
-      const signature = getCandidateSignature(candidate);
-      if (excludeSignatures.has(signature)) continue;
-      const copyRoot = ((_a = candidate.matches) == null ? void 0 : _a.call(candidate, ".notebook-summary")) ? candidate.parentElement || candidate : candidate;
-      const copyButton = [...copyRoot.querySelectorAll("button")].find((button) => labelMatches(button, [/copi/, /copy/]));
-      return {
-        element: candidate,
-        text,
-        signature,
-        copyButton
-      };
+      if (!(candidate == null ? void 0 : candidate.signature) || excludeSignatures.has(candidate.signature)) continue;
+      return candidate;
     }
     return null;
   }
-  function clickNativeCopyButton(candidateElement) {
-    var _a;
-    if (!candidateElement) return false;
-    const root = ((_a = candidateElement.matches) == null ? void 0 : _a.call(candidateElement, ".notebook-summary")) ? candidateElement.parentElement || candidateElement : candidateElement;
-    const copyButton = [...root.querySelectorAll("button")].find((button) => {
-      return labelMatches(button, [/copi/, /copy/]);
+  function reconcileAssistantTranscript(history = []) {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const messages = collectAssistantMessages({ includeSummaryFallback: false });
+    const reconciledHistory = history.map((entry, index) => {
+      const message = messages[index];
+      if (!message) return entry;
+      const changed = entry.responseSignature !== message.signature || normalizeDisplayText(entry.responseText) !== message.text;
+      return {
+        ...entry,
+        responseText: message.text,
+        responseSignature: message.signature,
+        messageIndex: message.messageIndex,
+        responseSource: message.source,
+        capturedFromDomAt: entry.capturedFromDomAt || now,
+        reconciledAt: changed ? now : entry.reconciledAt || now
+      };
     });
-    if (!copyButton) return false;
-    return clickTouchTarget(copyButton);
+    return {
+      messages,
+      history: reconciledHistory
+    };
   }
   async function sendBatchToNotebook(promptText, signal) {
     const textarea = await waitForComposeTextarea(signal);
@@ -763,10 +799,16 @@ ${entry.responseText}`;
   const BATCH_SIZE = 3;
   const WAIT_MS = 9e4;
   const CAPTURE_TIMEOUT_MS = 45e3;
+  const CAPTURE_STABLE_POLLS = 2;
   function formatError(error) {
     if (!error) return "Erro desconhecido.";
     if (error instanceof Error && error.message) return error.message;
     return String(error);
+  }
+  function toSignatureSet(values) {
+    return new Set(
+      values.filter(Boolean).map((value) => String(value))
+    );
   }
   class ClassificacaoRunner {
     constructor({ onChange, onLog } = {}) {
@@ -952,8 +994,9 @@ ${entry.responseText}`;
       return Promise.resolve();
     }
     async copyAll() {
-      const text = buildHistoryClipboardText(this.state.history);
-      if (!text.trim()) throw new Error("Ainda não existem respostas no histórico.");
+      const reconciledHistory = await this.reconcileHistoryFromDom();
+      const text = buildHistoryClipboardText(reconciledHistory);
+      if (!text.trim()) throw new Error("Ainda não existem respostas da IA no histórico.");
       const ok = await copyText(text);
       if (!ok) throw new Error("Não consegui copiar o histórico.");
       this.persist({ lastInfo: "Histórico copiado." });
@@ -966,6 +1009,76 @@ ${entry.responseText}`;
       if (!ok) throw new Error("Não consegui copiar a resposta.");
       this.persist({ lastInfo: "Resposta copiada." });
       return true;
+    }
+    getBatchSlice(startIndex) {
+      if (!Array.isArray(this.state.queue) || startIndex < 0) return [];
+      return this.state.queue.slice(startIndex, startIndex + BATCH_SIZE);
+    }
+    buildBatchSnapshot(startIndex, fallback = {}) {
+      const safeStartIndex = Number.isFinite(startIndex) ? startIndex : 0;
+      const queueSlice = this.getBatchSlice(safeStartIndex);
+      const fallbackItems = Array.isArray(fallback.items) && fallback.items.length ? fallback.items : queueSlice.map((item) => item.text);
+      const itemCount = Number.isFinite(fallback.itemCount) ? fallback.itemCount : fallbackItems.length;
+      const endIndex = Number.isFinite(fallback.endIndex) ? fallback.endIndex : Math.max(safeStartIndex, safeStartIndex + Math.max(itemCount, 1) - 1);
+      return {
+        batchNumber: Number.isFinite(fallback.batchNumber) ? fallback.batchNumber : Math.floor(safeStartIndex / BATCH_SIZE) + 1,
+        startIndex: safeStartIndex,
+        endIndex,
+        itemCount,
+        items: fallbackItems,
+        promptText: fallback.promptText || (queueSlice.length ? buildBatchText(queueSlice) : "")
+      };
+    }
+    createHistoryEntryFromMessage(messageOrder, message, existingEntry = null) {
+      const fallbackStartIndex = Number.isFinite(existingEntry == null ? void 0 : existingEntry.startIndex) ? existingEntry.startIndex : messageOrder * BATCH_SIZE;
+      const snapshot = this.buildBatchSnapshot(fallbackStartIndex, existingEntry || {});
+      const capturedFromDomAt = (/* @__PURE__ */ new Date()).toISOString();
+      const text = normalizeDisplayText((message == null ? void 0 : message.text) || (existingEntry == null ? void 0 : existingEntry.responseText) || "");
+      const signature = (message == null ? void 0 : message.signature) ? String(message.signature) : String((existingEntry == null ? void 0 : existingEntry.responseSignature) || "");
+      const changed = existingEntry ? normalizeDisplayText(existingEntry.responseText || "") !== text || String(existingEntry.responseSignature || "") !== signature : true;
+      return {
+        id: (existingEntry == null ? void 0 : existingEntry.id) || `response_${Date.now()}_${snapshot.batchNumber}`,
+        batchNumber: snapshot.batchNumber,
+        startIndex: snapshot.startIndex,
+        endIndex: snapshot.endIndex,
+        itemCount: snapshot.itemCount,
+        items: snapshot.items,
+        promptText: snapshot.promptText,
+        responseText: text,
+        responseSignature: signature,
+        capturedAt: (existingEntry == null ? void 0 : existingEntry.capturedAt) || capturedFromDomAt,
+        messageIndex: Number.isFinite(message == null ? void 0 : message.messageIndex) ? message.messageIndex : (existingEntry == null ? void 0 : existingEntry.messageIndex) ?? null,
+        responseSource: (message == null ? void 0 : message.source) || (existingEntry == null ? void 0 : existingEntry.responseSource) || "dom",
+        capturedFromDomAt: (existingEntry == null ? void 0 : existingEntry.capturedFromDomAt) || capturedFromDomAt,
+        reconciledAt: changed ? capturedFromDomAt : (existingEntry == null ? void 0 : existingEntry.reconciledAt) || ""
+      };
+    }
+    async reconcileHistoryFromDom() {
+      var _a;
+      const baseHistory = Array.isArray(this.state.history) ? this.state.history : [];
+      const transcript = reconcileAssistantTranscript(baseHistory);
+      const assistantMessages = Array.isArray(transcript.messages) ? transcript.messages : [];
+      if (!assistantMessages.length) {
+        return baseHistory;
+      }
+      const reconciledHistory = [];
+      const maxLength = Math.max(assistantMessages.length, baseHistory.length);
+      for (let index = 0; index < maxLength; index += 1) {
+        const message = assistantMessages[index];
+        const existingEntry = baseHistory[index] || null;
+        if (!message) {
+          if (existingEntry) reconciledHistory.push(existingEntry);
+          continue;
+        }
+        reconciledHistory.push(this.createHistoryEntryFromMessage(index, message, existingEntry));
+      }
+      this.persist({
+        history: reconciledHistory,
+        lastCapturedSignature: ((_a = reconciledHistory.at(-1)) == null ? void 0 : _a.responseSignature) || this.state.lastCapturedSignature,
+        lastInfo: "Histórico reconciliado com o DOM atual.",
+        lastError: ""
+      });
+      return reconciledHistory;
     }
     async processQueue(signal) {
       var _a, _b, _c;
@@ -980,7 +1093,7 @@ ${entry.responseText}`;
           const batchNumber = Math.floor(cursor / BATCH_SIZE) + 1;
           const promptText = buildBatchText(batch);
           const batchId = `batch_${Date.now()}_${cursor}`;
-          const baselineSignatures = snapshotResponseSignatures();
+          const baselineSignatures = snapshotAssistantSignatures();
           const initialBatchState = {
             id: batchId,
             batchNumber,
@@ -1028,31 +1141,26 @@ ${entry.responseText}`;
               remainingMs: 0
             }
           });
-          const candidate = await this.captureLatestResponse(signal, baselineSignatures);
-          if (!candidate) {
-            throw new Error("Não encontrei uma resposta nova para o lote atual.");
+          const message = await this.captureLatestResponse(signal, baselineSignatures);
+          if (!message) {
+            throw new Error("Não encontrei uma resposta nova da IA para o lote atual.");
           }
-          const entry = {
-            id: `response_${Date.now()}_${batchNumber}`,
+          const entry = this.createHistoryEntryFromMessage(batchNumber - 1, message, {
             batchNumber,
             startIndex: cursor,
             endIndex: cursor + batch.length - 1,
             itemCount: batch.length,
             items: batch.map((item) => item.text),
-            promptText,
-            responseText: candidate.text,
-            responseSignature: candidate.signature,
-            capturedAt: (/* @__PURE__ */ new Date()).toISOString()
-          };
+            promptText
+          });
           this.persist({
             history: [...this.state.history, entry],
-            lastCapturedSignature: candidate.signature,
+            lastCapturedSignature: entry.responseSignature,
             nextIndex: cursor + batch.length,
             currentBatch: null,
             lastInfo: `Lote ${batchNumber} capturado.`,
             lastError: ""
           });
-          clickNativeCopyButton(candidate.element);
         }
         if (!signal.aborted) {
           this.persist({
@@ -1097,25 +1205,21 @@ ${entry.responseText}`;
           });
         });
       }
-      const candidate = await this.captureLatestResponse(signal, baselineSignatures);
-      if (!candidate) {
-        throw new Error("Não encontrei uma resposta nova para o lote retomado.");
+      const message = await this.captureLatestResponse(signal, baselineSignatures);
+      if (!message) {
+        throw new Error("Não encontrei uma resposta nova da IA para o lote retomado.");
       }
-      const entry = {
-        id: `response_${Date.now()}_${current.batchNumber}`,
+      const entry = this.createHistoryEntryFromMessage(current.batchNumber - 1, message, {
         batchNumber: current.batchNumber,
         startIndex: current.startIndex,
         endIndex: current.endIndex,
         itemCount: current.itemCount,
         items: current.items,
-        promptText: current.promptText,
-        responseText: candidate.text,
-        responseSignature: candidate.signature,
-        capturedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
+        promptText: current.promptText
+      });
       this.persist({
         history: [...this.state.history, entry],
-        lastCapturedSignature: candidate.signature,
+        lastCapturedSignature: entry.responseSignature,
         nextIndex: current.endIndex + 1,
         currentBatch: null,
         status: "running",
@@ -1124,28 +1228,37 @@ ${entry.responseText}`;
         lastInfo: `Lote ${current.batchNumber} retomado e capturado.`,
         lastError: ""
       });
-      clickNativeCopyButton(candidate.element);
     }
     async captureLatestResponse(signal, baselineSignatures = []) {
-      const excluded = new Set([
+      const excluded = toSignatureSet([
         this.state.lastCapturedSignature,
         ...baselineSignatures
-      ].filter(Boolean).map((value) => String(value)));
+      ]);
       const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+      let stableCandidate = null;
+      let stableReads = 0;
+      let lastSeenCandidate = null;
       while (!signal.aborted && Date.now() < deadline) {
-        const candidate = findLatestResponseCandidate({
-          excludeSignatures: excluded
+        const candidate = findLatestAssistantMessage({
+          excludeSignatures: excluded,
+          includeSummaryFallback: true
         });
-        if (candidate) {
-          const normalizedText = normalizeDisplayText(candidate.text);
-          const signature = candidate.signature;
-          if (signature && !excluded.has(signature) && normalizedText.length >= 20) {
+        if ((candidate == null ? void 0 : candidate.signature) && !excluded.has(candidate.signature)) {
+          lastSeenCandidate = candidate;
+          const sameCandidate = stableCandidate && stableCandidate.signature === candidate.signature && normalizeDisplayText(stableCandidate.text) === normalizeDisplayText(candidate.text);
+          if (sameCandidate) {
+            stableReads += 1;
+          } else {
+            stableCandidate = candidate;
+            stableReads = 1;
+          }
+          if (stableReads >= CAPTURE_STABLE_POLLS) {
             return candidate;
           }
         }
         await delay(1e3, signal);
       }
-      return null;
+      return lastSeenCandidate;
     }
     async maybeResumeCurrentBatch() {
       var _a, _b;
@@ -2135,7 +2248,7 @@ ${entry.responseText}`;
       this.startButton.disabled = state.status === "running";
       this.stopButton.disabled = !(state.status === "running" || state.status === "paused" || state.status === "stopped");
       this.resetButton.disabled = !loadedCount && historyCount === 0 && !current;
-      this.copyAllButton.disabled = historyCount === 0;
+      this.copyAllButton.disabled = false;
       if (state.lastError) {
         this.setNotice(state.lastError, "error");
       } else if (state.lastInfo) {

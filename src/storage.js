@@ -38,7 +38,7 @@ function writeRawStorage(value) {
 
 export function createDefaultState() {
   return {
-    version: 2,
+    version: 4,
     status: 'idle',
     collapsed: false,
     launcherTop: 120,
@@ -56,6 +56,20 @@ export function createDefaultState() {
   };
 }
 
+function normalizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+
+  return {
+    ...entry,
+    responseText: normalizeDisplayText(entry.responseText || ''),
+    responseSignature: entry.responseSignature ? String(entry.responseSignature) : '',
+    messageIndex: Number.isFinite(entry.messageIndex) ? entry.messageIndex : null,
+    responseSource: entry.responseSource ? String(entry.responseSource) : 'dom',
+    capturedFromDomAt: entry.capturedFromDomAt ? String(entry.capturedFromDomAt) : '',
+    reconciledAt: entry.reconciledAt ? String(entry.reconciledAt) : '',
+  };
+}
+
 export function loadState() {
   const raw = readRawStorage();
   if (!raw) return createDefaultState();
@@ -68,7 +82,9 @@ export function loadState() {
     };
 
     state.queue = Array.isArray(state.queue) ? state.queue : [];
-    state.history = Array.isArray(state.history) ? state.history : [];
+    state.history = Array.isArray(state.history)
+      ? state.history.map(normalizeHistoryEntry).filter(Boolean)
+      : [];
     state.nextIndex = Number.isFinite(state.nextIndex) ? state.nextIndex : 0;
     state.collapsed = Boolean(state.collapsed);
     state.launcherTop = Number.isFinite(state.launcherTop) ? state.launcherTop : 120;
@@ -185,6 +201,7 @@ export function buildBatchText(batchItems) {
 
 export function buildHistoryClipboardText(history) {
   return history
+    .filter(entry => normalizeDisplayText(entry?.responseText || ''))
     .map((entry, index) => {
       const title = `LOTE ${index + 1} (${entry.startIndex + 1}-${entry.endIndex + 1})`;
       return `=== ${title} ===\n${entry.responseText}`;

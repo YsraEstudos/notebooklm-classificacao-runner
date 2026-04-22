@@ -1,5 +1,12 @@
 import { createAbortError, delay, normalizeDisplayText, normalizeSignatureText, stableHash, waitFor } from './utils';
 
+const USER_CARD_SELECTOR = 'mat-card.from-user-message-card-content, .from-user-message-card-content';
+const ASSISTANT_CARD_SELECTOR = 'mat-card.to-user-message-card-content, .to-user-message-card-content';
+const SUMMARY_SELECTOR = '.chat-panel-empty-state, .notebook-summary';
+const CHAT_PANEL_SELECTOR = '.chat-panel-content';
+const TRANSCRIPT_CONTAINER_SELECTOR = '.chat-message-pair, .chat-panel-empty-state';
+const PENDING_RESPONSE_PATTERN = /^(reading full chapters|thinking|carregando|lendo)(\.{0,3})?$/i;
+
 function queryAllDeep(selector, root = document) {
   const results = [];
   const seen = new Set();
@@ -126,7 +133,13 @@ function getSubmitButtonScore(button, composerTextarea = null) {
 
   if (score < 0) return -1;
 
-  if (score === 20 && !button.closest?.('form') && !button.closest?.('.bottom-right-container') && !button.closest?.('.message-container') && !button.closest?.('.input-group')) {
+  if (
+    score === 20 &&
+    !button.closest?.('form') &&
+    !button.closest?.('.bottom-right-container') &&
+    !button.closest?.('.message-container') &&
+    !button.closest?.('.input-group')
+  ) {
     return -1;
   }
 
@@ -156,6 +169,183 @@ function getBestSubmitButton(root, composerTextarea = null) {
   return candidates[0]?.element || null;
 }
 
+function isEnabledButton(element) {
+  if (!element) return false;
+  if (element.disabled) return false;
+  if (element.matches?.('[disabled], [aria-disabled="true"], .mat-mdc-button-disabled')) return false;
+  if (element.getAttribute?.('aria-disabled') === 'true') return false;
+  return true;
+}
+
+function getChatPanelRoot() {
+  return queryAllDeep(CHAT_PANEL_SELECTOR).find(element => isVisible(element) && !isInsideShadowPanel(element)) || null;
+}
+
+function findMessageBodyNode(element, selectors) {
+  for (const selector of selectors) {
+    if (element.matches?.(selector)) return element;
+    const nested = element.querySelector?.(selector);
+    if (nested) return nested;
+  }
+
+  return element;
+}
+
+function cloneWithoutControls(element) {
+  const clone = element.cloneNode(true);
+  clone.querySelectorAll([
+    'button',
+    '[role="button"]',
+    'input',
+    'textarea',
+    'script',
+    'style',
+    'svg',
+    'mat-icon',
+    'mat-card-actions',
+    'chat-actions',
+    '.message-actions',
+    '.actions-container',
+    '.action',
+    '.pin-button',
+    '.xap-copy-to-clipboard',
+    '.suggestions-container',
+    'follow-up',
+    '.follow-up-chip',
+    '.follow-up-vertical-container',
+    '.chat-panel-empty-state-action-bar',
+    '.mat-mdc-button-touch-target',
+    '[aria-hidden="true"]',
+    'chat-panel-header',
+  ].join(', ')).forEach(node => node.remove());
+
+  return clone;
+}
+
+function extractTextFromNode(node) {
+  if (!node) return '';
+  const clone = cloneWithoutControls(node);
+  const extracted = normalizeDisplayText(clone.innerText || clone.textContent || '');
+  if (extracted) return extracted;
+  return normalizeDisplayText(node.innerText || node.textContent || '');
+}
+
+function createTranscriptItem({ element, kind, messageIndex, source = 'dom' }) {
+  if (!element) return null;
+
+  const bodyNode = kind === 'assistant'
+    ? findMessageBodyNode(element, [
+      '.message-content.to-user-message-inner-content',
+      '.to-user-message-inner-content',
+      '.message-content',
+    ])
+    : kind === 'user'
+      ? findMessageBodyNode(element, [
+        '.message-content.from-user-message-inner-content',
+        '.from-user-message-inner-content',
+        '.message-content',
+      ])
+      : findMessageBodyNode(element, [
+        '.notebook-summary',
+        '.summary-content',
+        '.chat-panel-empty-state',
+      ]);
+
+  const text = extractTextFromNode(bodyNode);
+  if (!text) return null;
+
+  return {
+    element,
+    bodyNode,
+    text,
+    signature: stableHash(normalizeSignatureText(text)),
+    messageIndex,
+    kind,
+    source,
+  };
+}
+
+function collectTranscriptContainers(root) {
+  if (!root) return [];
+
+  const containers = [...root.querySelectorAll(TRANSCRIPT_CONTAINER_SELECTOR)];
+  if (containers.length > 0) return containers;
+
+  const standalone = [];
+  const summary = root.querySelector('.chat-panel-empty-state');
+  if (summary) standalone.push(summary);
+  queryAllDeep(`${USER_CARD_SELECTOR}, ${ASSISTANT_CARD_SELECTOR}`, root).forEach(element => {
+    if (!standalone.includes(element)) standalone.push(element);
+  });
+  return standalone;
+}
+
+function collectTranscriptItems() {
+  const root = getChatPanelRoot();
+  if (!root) return [];
+
+  const items = [];
+  let userIndex = 0;
+  let assistantIndex = 0;
+  let summaryIndex = 0;
+
+  for (const container of collectTranscriptContainers(root)) {
+    if (container.matches?.('.chat-panel-empty-state')) {
+      const summaryItem = createTranscriptItem({
+        element: container,
+        kind: 'summary',
+        messageIndex: summaryIndex,
+      });
+
+      if (summaryItem) {
+        items.push(summaryItem);
+        summaryIndex += 1;
+      }
+      continue;
+    }
+
+    const userCard = container.matches?.(USER_CARD_SELECTOR)
+      ? container
+      : container.querySelector?.(USER_CARD_SELECTOR);
+    if (userCard) {
+      const userItem = createTranscriptItem({
+        element: userCard,
+        kind: 'user',
+        messageIndex: userIndex,
+      });
+
+      if (userItem) {
+        items.push(userItem);
+        userIndex += 1;
+      }
+    }
+
+    const assistantCard = container.matches?.(ASSISTANT_CARD_SELECTOR)
+      ? container
+      : container.querySelector?.(ASSISTANT_CARD_SELECTOR);
+    if (assistantCard) {
+      const assistantItem = createTranscriptItem({
+        element: assistantCard,
+        kind: 'assistant',
+        messageIndex: assistantIndex,
+      });
+
+      if (assistantItem) {
+        items.push(assistantItem);
+        assistantIndex += 1;
+      }
+    }
+  }
+
+  return items;
+}
+
+function isLikelyPendingAssistantText(text) {
+  const normalized = normalizeDisplayText(text);
+  if (!normalized) return true;
+  return PENDING_RESPONSE_PATTERN.test(normalized);
+}
+
 export function getComposeContext() {
   const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
   const candidates = [];
@@ -176,14 +366,6 @@ export function getComposeContext() {
 
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0] || null;
-}
-
-function isEnabledButton(element) {
-  if (!element) return false;
-  if (element.disabled) return false;
-  if (element.matches?.('[disabled], [aria-disabled="true"], .mat-mdc-button-disabled')) return false;
-  if (element.getAttribute?.('aria-disabled') === 'true') return false;
-  return true;
 }
 
 export function getComposeTextarea() {
@@ -354,173 +536,81 @@ export async function activateSubmitButton(button, signal) {
   return true;
 }
 
-function cloneWithoutControls(element) {
-  const clone = element.cloneNode(true);
-  clone.querySelectorAll([
-    'button',
-    '[role="button"]',
-    'input',
-    'textarea',
-    'script',
-    'style',
-    'svg',
-    'mat-icon',
-    '.mat-mdc-button-touch-target',
-    '[aria-hidden="true"]',
-    'chat-panel-header',
-    '.chat-panel-empty-state-action-bar',
-    '.suggestions-container',
-  ].join(', ')).forEach(node => node.remove());
-  return clone;
-}
-
-function getResponseRootElement(element) {
-  if (!element) return null;
-  if (element.matches?.('.notebook-summary')) return element;
-
-  const directSummary = element.querySelector?.('.notebook-summary');
-  if (directSummary) return directSummary;
-
-  return element;
-}
-
-function getResponseContainerFromButton(button) {
-  const selector = [
-    '.notebook-summary',
-    '.chat-panel-empty-state',
-    '.chat-panel-content',
-    '.chat-panel-response',
-    '.chat-panel-message',
-    'note-card',
-    '.note-card',
-    'mat-card',
-    'article',
-    '[role="article"]',
-    '[data-testid*="response"]',
-    '[data-testid*="answer"]',
-    '[data-testid*="note"]',
-    '.message',
-    '.answer',
-    '.assistant-message',
-    '.response',
-  ].join(', ');
-
-  const card = button.closest?.(selector);
-  if (card) return card;
-
-  let current = button.parentElement;
-  while (current && current !== document.body) {
-    if (current.matches?.('section, article, mat-card, div, note-card, chat-panel-content, chat-panel')) {
-      const summaryNode = current.querySelector?.('.notebook-summary');
-      const text = normalizeDisplayText(summaryNode?.textContent || current.textContent || '');
-      if (text.length >= 20) return current;
-    }
-    current = current.parentElement;
-  }
-
-  return button.parentElement || button;
-}
-
 export function extractResponseText(element) {
-  if (!element) return '';
-  const source = getResponseRootElement(element);
-  const clone = cloneWithoutControls(source);
-  const extracted = normalizeDisplayText(clone.innerText || clone.textContent || '');
-  if (extracted) return extracted;
-  return normalizeDisplayText(source.innerText || source.textContent || '');
-}
-
-function getCandidateSignature(element) {
-  return stableHash(normalizeSignatureText(extractResponseText(element)));
-}
-
-function getCardContainerFromButton(button) {
-  return getResponseContainerFromButton(button);
-}
-
-function collectResponseCandidates() {
-  const candidates = [];
-  const seen = new Set();
-
-  const addCandidate = element => {
-    if (!element || seen.has(element) || !isVisible(element) || isInsideShadowPanel(element)) return;
-    const text = extractResponseText(element);
-    if (text.length < 20) return;
-    candidates.push(element);
-    seen.add(element);
-  };
-
-  queryAllDeep('.notebook-summary').forEach(addCandidate);
-
-  queryAllDeep('button, [role="button"]').filter(button => {
-    if (!isVisible(button) || isInsideShadowPanel(button)) return false;
-    return labelMatches(button, [/copi/, /copy/]);
-  }).forEach(button => {
-    const card = getCardContainerFromButton(button);
-    addCandidate(card);
+  const item = createTranscriptItem({
+    element,
+    kind: element?.matches?.(ASSISTANT_CARD_SELECTOR) ? 'assistant' : 'summary',
+    messageIndex: 0,
   });
 
-  queryAllDeep([
-    '.chat-panel-empty-state',
-    '.chat-panel-content',
-    '.chat-panel-response',
-    '.chat-panel-message',
-    'note-card',
-    '.note-card',
-    'mat-card',
-    'article',
-    '[role="article"]',
-    '[data-testid*="response"]',
-    '[data-testid*="answer"]',
-    '[data-testid*="note"]',
-    '.message',
-    '.answer',
-    '.assistant-message',
-    '.response',
-  ].join(',')).forEach(addCandidate);
-
-  return candidates;
+  return item?.text || '';
 }
 
-export function snapshotResponseSignatures() {
-  return [...new Set(collectResponseCandidates().map(candidate => getCandidateSignature(candidate)).filter(Boolean))];
+export function collectAssistantMessages({ includeSummaryFallback = true } = {}) {
+  const transcript = collectTranscriptItems();
+  const assistantMessages = transcript.filter(item => item.kind === 'assistant');
+
+  if (assistantMessages.length > 0) {
+    return assistantMessages.filter(item => !isLikelyPendingAssistantText(item.text));
+  }
+
+  if (!includeSummaryFallback) return [];
+
+  return transcript.filter(item => item.kind === 'summary');
 }
 
-export function findLatestResponseCandidate({ excludeSignatures = new Set() } = {}) {
-  const candidates = collectResponseCandidates();
+export function snapshotAssistantSignatures(options) {
+  return [...new Set(collectAssistantMessages(options).map(message => message.signature).filter(Boolean))];
+}
+
+export function findLatestAssistantMessage({ excludeSignatures = new Set(), includeSummaryFallback = true } = {}) {
+  const candidates = collectAssistantMessages({ includeSummaryFallback });
 
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const candidate = candidates[index];
-    const text = extractResponseText(candidate);
-    if (text.length < 20) continue;
+    if (!candidate?.signature || excludeSignatures.has(candidate.signature)) continue;
 
-    const signature = getCandidateSignature(candidate);
-    if (excludeSignatures.has(signature)) continue;
-
-    const copyRoot = candidate.matches?.('.notebook-summary')
-      ? candidate.parentElement || candidate
-      : candidate;
-    const copyButton = [...copyRoot.querySelectorAll('button')].find(button => labelMatches(button, [/copi/, /copy/]));
-
-    return {
-      element: candidate,
-      text,
-      signature,
-      copyButton,
-    };
+    return candidate;
   }
 
   return null;
 }
 
+export function reconcileAssistantTranscript(history = []) {
+  const now = new Date().toISOString();
+  const messages = collectAssistantMessages({ includeSummaryFallback: false });
+  const reconciledHistory = history.map((entry, index) => {
+    const message = messages[index];
+    if (!message) return entry;
+
+    const changed = entry.responseSignature !== message.signature || normalizeDisplayText(entry.responseText) !== message.text;
+
+    return {
+      ...entry,
+      responseText: message.text,
+      responseSignature: message.signature,
+      messageIndex: message.messageIndex,
+      responseSource: message.source,
+      capturedFromDomAt: entry.capturedFromDomAt || now,
+      reconciledAt: changed ? now : entry.reconciledAt || now,
+    };
+  });
+
+  return {
+    messages,
+    history: reconciledHistory,
+  };
+}
+
 export function clickNativeCopyButton(candidateElement) {
   if (!candidateElement) return false;
 
-  const root = candidateElement.matches?.('.notebook-summary')
-    ? candidateElement.parentElement || candidateElement
-    : candidateElement;
-  const copyButton = [...root.querySelectorAll('button')].find(button => {
-    return labelMatches(button, [/copi/, /copy/]);
+  const copyRoot = candidateElement.matches?.(ASSISTANT_CARD_SELECTOR)
+    ? candidateElement
+    : candidateElement.closest?.(ASSISTANT_CARD_SELECTOR) || candidateElement.parentElement || candidateElement;
+
+  const copyButton = [...copyRoot.querySelectorAll('button')].find(button => {
+    return labelMatches(button, [/copy model response to clipboard/, /copy summary/, /copy/]);
   });
 
   if (!copyButton) return false;

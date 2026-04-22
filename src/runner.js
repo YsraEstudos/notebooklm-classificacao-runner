@@ -12,21 +12,30 @@ import {
   normalizeDisplayText,
 } from './utils';
 import {
-  clickNativeCopyButton,
-  findLatestResponseCandidate,
+  findLatestAssistantMessage,
+  reconcileAssistantTranscript,
   sendBatchToNotebook,
-  snapshotResponseSignatures,
+  snapshotAssistantSignatures,
   waitForBatchDeadline,
 } from './dom';
 
 const BATCH_SIZE = 3;
 const WAIT_MS = 90_000;
 const CAPTURE_TIMEOUT_MS = 45_000;
+const CAPTURE_STABLE_POLLS = 2;
 
 function formatError(error) {
   if (!error) return 'Erro desconhecido.';
   if (error instanceof Error && error.message) return error.message;
   return String(error);
+}
+
+function toSignatureSet(values) {
+  return new Set(
+    values
+      .filter(Boolean)
+      .map(value => String(value)),
+  );
 }
 
 export class ClassificacaoRunner {
@@ -248,8 +257,9 @@ export class ClassificacaoRunner {
   }
 
   async copyAll() {
-    const text = buildHistoryClipboardText(this.state.history);
-    if (!text.trim()) throw new Error('Ainda não existem respostas no histórico.');
+    const reconciledHistory = await this.reconcileHistoryFromDom();
+    const text = buildHistoryClipboardText(reconciledHistory);
+    if (!text.trim()) throw new Error('Ainda não existem respostas da IA no histórico.');
 
     const ok = await copyText(text);
     if (!ok) throw new Error('Não consegui copiar o histórico.');
@@ -269,6 +279,100 @@ export class ClassificacaoRunner {
     return true;
   }
 
+  getBatchSlice(startIndex) {
+    if (!Array.isArray(this.state.queue) || startIndex < 0) return [];
+    return this.state.queue.slice(startIndex, startIndex + BATCH_SIZE);
+  }
+
+  buildBatchSnapshot(startIndex, fallback = {}) {
+    const safeStartIndex = Number.isFinite(startIndex) ? startIndex : 0;
+    const queueSlice = this.getBatchSlice(safeStartIndex);
+    const fallbackItems = Array.isArray(fallback.items) && fallback.items.length
+      ? fallback.items
+      : queueSlice.map(item => item.text);
+    const itemCount = Number.isFinite(fallback.itemCount)
+      ? fallback.itemCount
+      : fallbackItems.length;
+    const endIndex = Number.isFinite(fallback.endIndex)
+      ? fallback.endIndex
+      : Math.max(safeStartIndex, safeStartIndex + Math.max(itemCount, 1) - 1);
+
+    return {
+      batchNumber: Number.isFinite(fallback.batchNumber)
+        ? fallback.batchNumber
+        : Math.floor(safeStartIndex / BATCH_SIZE) + 1,
+      startIndex: safeStartIndex,
+      endIndex,
+      itemCount,
+      items: fallbackItems,
+      promptText: fallback.promptText || (queueSlice.length ? buildBatchText(queueSlice) : ''),
+    };
+  }
+
+  createHistoryEntryFromMessage(messageOrder, message, existingEntry = null) {
+    const fallbackStartIndex = Number.isFinite(existingEntry?.startIndex)
+      ? existingEntry.startIndex
+      : messageOrder * BATCH_SIZE;
+    const snapshot = this.buildBatchSnapshot(fallbackStartIndex, existingEntry || {});
+    const capturedFromDomAt = new Date().toISOString();
+    const text = normalizeDisplayText(message?.text || existingEntry?.responseText || '');
+    const signature = message?.signature ? String(message.signature) : String(existingEntry?.responseSignature || '');
+    const changed = existingEntry
+      ? normalizeDisplayText(existingEntry.responseText || '') !== text || String(existingEntry.responseSignature || '') !== signature
+      : true;
+
+    return {
+      id: existingEntry?.id || `response_${Date.now()}_${snapshot.batchNumber}`,
+      batchNumber: snapshot.batchNumber,
+      startIndex: snapshot.startIndex,
+      endIndex: snapshot.endIndex,
+      itemCount: snapshot.itemCount,
+      items: snapshot.items,
+      promptText: snapshot.promptText,
+      responseText: text,
+      responseSignature: signature,
+      capturedAt: existingEntry?.capturedAt || capturedFromDomAt,
+      messageIndex: Number.isFinite(message?.messageIndex) ? message.messageIndex : existingEntry?.messageIndex ?? null,
+      responseSource: message?.source || existingEntry?.responseSource || 'dom',
+      capturedFromDomAt: existingEntry?.capturedFromDomAt || capturedFromDomAt,
+      reconciledAt: changed ? capturedFromDomAt : existingEntry?.reconciledAt || '',
+    };
+  }
+
+  async reconcileHistoryFromDom() {
+    const baseHistory = Array.isArray(this.state.history) ? this.state.history : [];
+    const transcript = reconcileAssistantTranscript(baseHistory);
+    const assistantMessages = Array.isArray(transcript.messages) ? transcript.messages : [];
+
+    if (!assistantMessages.length) {
+      return baseHistory;
+    }
+
+    const reconciledHistory = [];
+    const maxLength = Math.max(assistantMessages.length, baseHistory.length);
+
+    for (let index = 0; index < maxLength; index += 1) {
+      const message = assistantMessages[index];
+      const existingEntry = baseHistory[index] || null;
+
+      if (!message) {
+        if (existingEntry) reconciledHistory.push(existingEntry);
+        continue;
+      }
+
+      reconciledHistory.push(this.createHistoryEntryFromMessage(index, message, existingEntry));
+    }
+
+    this.persist({
+      history: reconciledHistory,
+      lastCapturedSignature: reconciledHistory.at(-1)?.responseSignature || this.state.lastCapturedSignature,
+      lastInfo: 'Histórico reconciliado com o DOM atual.',
+      lastError: '',
+    });
+
+    return reconciledHistory;
+  }
+
   async processQueue(signal) {
     try {
       if (this.state.currentBatch?.phase === 'waiting' || this.state.currentBatch?.phase === 'capturing') {
@@ -284,7 +388,7 @@ export class ClassificacaoRunner {
         const batchNumber = Math.floor(cursor / BATCH_SIZE) + 1;
         const promptText = buildBatchText(batch);
         const batchId = `batch_${Date.now()}_${cursor}`;
-        const baselineSignatures = snapshotResponseSignatures();
+        const baselineSignatures = snapshotAssistantSignatures();
         const initialBatchState = {
           id: batchId,
           batchNumber,
@@ -338,34 +442,28 @@ export class ClassificacaoRunner {
           },
         });
 
-        const candidate = await this.captureLatestResponse(signal, baselineSignatures);
-        if (!candidate) {
-          throw new Error('Não encontrei uma resposta nova para o lote atual.');
+        const message = await this.captureLatestResponse(signal, baselineSignatures);
+        if (!message) {
+          throw new Error('Não encontrei uma resposta nova da IA para o lote atual.');
         }
 
-        const entry = {
-          id: `response_${Date.now()}_${batchNumber}`,
+        const entry = this.createHistoryEntryFromMessage(batchNumber - 1, message, {
           batchNumber,
           startIndex: cursor,
           endIndex: cursor + batch.length - 1,
           itemCount: batch.length,
           items: batch.map(item => item.text),
           promptText,
-          responseText: candidate.text,
-          responseSignature: candidate.signature,
-          capturedAt: new Date().toISOString(),
-        };
+        });
 
         this.persist({
           history: [...this.state.history, entry],
-          lastCapturedSignature: candidate.signature,
+          lastCapturedSignature: entry.responseSignature,
           nextIndex: cursor + batch.length,
           currentBatch: null,
           lastInfo: `Lote ${batchNumber} capturado.`,
           lastError: '',
         });
-
-        clickNativeCopyButton(candidate.element);
       }
 
       if (!signal.aborted) {
@@ -415,27 +513,23 @@ export class ClassificacaoRunner {
       });
     }
 
-    const candidate = await this.captureLatestResponse(signal, baselineSignatures);
-    if (!candidate) {
-      throw new Error('Não encontrei uma resposta nova para o lote retomado.');
+    const message = await this.captureLatestResponse(signal, baselineSignatures);
+    if (!message) {
+      throw new Error('Não encontrei uma resposta nova da IA para o lote retomado.');
     }
 
-    const entry = {
-      id: `response_${Date.now()}_${current.batchNumber}`,
+    const entry = this.createHistoryEntryFromMessage(current.batchNumber - 1, message, {
       batchNumber: current.batchNumber,
       startIndex: current.startIndex,
       endIndex: current.endIndex,
       itemCount: current.itemCount,
       items: current.items,
       promptText: current.promptText,
-      responseText: candidate.text,
-      responseSignature: candidate.signature,
-      capturedAt: new Date().toISOString(),
-    };
+    });
 
     this.persist({
       history: [...this.state.history, entry],
-      lastCapturedSignature: candidate.signature,
+      lastCapturedSignature: entry.responseSignature,
       nextIndex: current.endIndex + 1,
       currentBatch: null,
       status: 'running',
@@ -444,27 +538,39 @@ export class ClassificacaoRunner {
       lastInfo: `Lote ${current.batchNumber} retomado e capturado.`,
       lastError: '',
     });
-
-    clickNativeCopyButton(candidate.element);
   }
 
   async captureLatestResponse(signal, baselineSignatures = []) {
-    const excluded = new Set([
+    const excluded = toSignatureSet([
       this.state.lastCapturedSignature,
       ...baselineSignatures,
-    ].filter(Boolean).map(value => String(value)));
+    ]);
     const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+    let stableCandidate = null;
+    let stableReads = 0;
+    let lastSeenCandidate = null;
 
     while (!signal.aborted && Date.now() < deadline) {
-      const candidate = findLatestResponseCandidate({
+      const candidate = findLatestAssistantMessage({
         excludeSignatures: excluded,
+        includeSummaryFallback: true,
       });
 
-      if (candidate) {
-        const normalizedText = normalizeDisplayText(candidate.text);
-        const signature = candidate.signature;
+      if (candidate?.signature && !excluded.has(candidate.signature)) {
+        lastSeenCandidate = candidate;
 
-        if (signature && !excluded.has(signature) && normalizedText.length >= 20) {
+        const sameCandidate = stableCandidate
+          && stableCandidate.signature === candidate.signature
+          && normalizeDisplayText(stableCandidate.text) === normalizeDisplayText(candidate.text);
+
+        if (sameCandidate) {
+          stableReads += 1;
+        } else {
+          stableCandidate = candidate;
+          stableReads = 1;
+        }
+
+        if (stableReads >= CAPTURE_STABLE_POLLS) {
           return candidate;
         }
       }
@@ -472,7 +578,7 @@ export class ClassificacaoRunner {
       await delay(1000, signal);
     }
 
-    return null;
+    return lastSeenCandidate;
   }
 
   async maybeResumeCurrentBatch() {

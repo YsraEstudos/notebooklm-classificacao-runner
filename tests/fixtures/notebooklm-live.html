@@ -9,10 +9,10 @@
               <div class="message-container">
                 <textarea
                   rows="1"
-                  aria-label="Caixa de consulta"
+                  aria-label="Discover sources based on the inputted query"
                   formcontrolname="discoverSourcesQuery"
                   class="mat-mdc-input-element cdk-textarea-autosize query-box-textarea ng-untouched ng-pristine mat-mdc-form-field-textarea-control mat-mdc-form-field-input-control mdc-text-field__input cdk-text-field-autofill-monitored"
-                  placeholder="Pesquise fontes com base na consulta inserida"
+                  placeholder="Search sources based on your query"
                   disabled
                   readonly
                 ></textarea>
@@ -27,7 +27,7 @@
                 ></textarea>
                 <div class="bottom-right-container ng-star-inserted">
                   <div class="selected-num-container mat-body-small ng-star-inserted">
-                    <div class="selected-num">33 fontes</div>
+                    <div class="selected-num">33 sources</div>
                   </div>
                   <button
                     aria-label="Submit"
@@ -49,23 +49,157 @@
       </query-box>
 
       <chat-panel-content class="chat-panel-content">
-        <chat-panel-header class="ng-star-inserted">landscape_2 🧰 photo_spark Customize Untitled notebook 1 source · Jul 4, 2024</chat-panel-header>
+        <chat-panel-header class="ng-star-inserted">
+          landscape_2 NotebookLM demo notebook · 5 messages
+        </chat-panel-header>
+
         <div class="chat-panel-empty-state ng-star-inserted">
           <span class="notebook-summary mat-body-medium ng-star-inserted">
-            The provided text serves as an industrial inventory database or a comprehensive technical catalog listing various mechanical and electronic components. Each entry features a unique identification code, a detailed technical description, and a shortened reference label for logistical tracking.
+            This notebook contains catalog information for industrial and technical products grouped by function and material.
           </span>
           <div class="chat-panel-empty-state-action-bar ng-star-inserted">
-            <button aria-label="Save to note" class="mdc-button mat-mdc-button-base label-medium-button mdc-button--outlined mat-mdc-outlined-button mat-unthemed">keep Save to note</button>
-            <button aria-label="Copy summary" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger xap-copy-to-clipboard mat-unthemed">
+            <button aria-label="Save to note" class="mdc-button mat-mdc-button-base">keep Save to note</button>
+            <button aria-label="Copy summary" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base xap-copy-to-clipboard">
               <span class="mat-mdc-button-touch-target"></span>
               <span>copy_all</span>
             </button>
-            <button aria-label="Good summary" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger mat-unthemed">thumb_up</button>
-            <button aria-label="Bad summary" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base mat-mdc-tooltip-trigger mat-unthemed">thumb_down</button>
+            <button aria-label="Good summary" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base">thumb_up</button>
+            <button aria-label="Bad summary" class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base">thumb_down</button>
           </div>
           <div class="suggestions-container ng-star-inserted">
-            <button role="button" class="follow-up-chip">What types of industrial sensors and monitoring devices are available?</button>
+            <button role="button" class="follow-up-chip">What is the overall purpose of this notebook?</button>
           </div>
+        </div>
+
+        <div class="chat-message-pair ng-star-inserted" data-pair="1">
+          <chat-message class="individual-message from-user-container">
+            <mat-card class="from-user-message-card-content">
+              <mat-card-content class="message-content from-user-message-inner-content">
+                <div class="message-text-content">PROMPT 1: Classifique os itens do lote 1.</div>
+              </mat-card-content>
+            </mat-card>
+          </chat-message>
+          <chat-message class="individual-message to-user-container">
+            <mat-card class="to-user-message-card-content">
+              <mat-card-content class="message-content to-user-message-inner-content">
+                <div class="message-text-content">
+                  RESPOSTA IA 1: Para o lote 1, preciso confirmar o material descrito antes de sugerir uma NCM.
+                </div>
+              </mat-card-content>
+              <mat-card-actions class="message-actions">
+                <button aria-label="Copy model response to clipboard" class="xap-copy-to-clipboard">copy_all</button>
+                <button aria-label="Save to note">keep</button>
+                <button aria-label="Like response">thumb_up</button>
+              </mat-card-actions>
+              <div class="suggestions-container">
+                <button class="follow-up-chip">What details are missing?</button>
+              </div>
+            </mat-card>
+          </chat-message>
+        </div>
+
+        <div class="chat-message-pair ng-star-inserted" data-pair="2">
+          <chat-message class="individual-message from-user-container">
+            <mat-card class="from-user-message-card-content">
+              <mat-card-content class="message-content from-user-message-inner-content">
+                <div class="message-text-content">PROMPT 2: Analise o segundo grupo de produtos.</div>
+              </mat-card-content>
+            </mat-card>
+          </chat-message>
+          <chat-message class="individual-message to-user-container">
+            <mat-card class="to-user-message-card-content">
+              <mat-card-content class="message-content to-user-message-inner-content">
+                <div class="message-text-content">
+                  RESPOSTA IA 2: O segundo grupo pode ser tratado com classificação genérica somente se o material não estiver presente.
+                </div>
+              </mat-card-content>
+              <mat-card-actions class="message-actions">
+                <button aria-label="Copy model response to clipboard" class="xap-copy-to-clipboard">copy_all</button>
+                <button aria-label="Save to note">keep</button>
+              </mat-card-actions>
+              <div class="suggestions-container">
+                <button class="follow-up-chip">Show generic alternatives</button>
+              </div>
+            </mat-card>
+          </chat-message>
+        </div>
+
+        <div class="chat-message-pair ng-star-inserted" data-pair="3">
+          <chat-message class="individual-message from-user-container">
+            <mat-card class="from-user-message-card-content">
+              <mat-card-content class="message-content from-user-message-inner-content">
+                <div class="message-text-content">PROMPT 3: Liste os códigos aplicáveis ao terceiro lote.</div>
+              </mat-card-content>
+            </mat-card>
+          </chat-message>
+          <chat-message class="individual-message to-user-container">
+            <mat-card class="to-user-message-card-content">
+              <mat-card-content class="message-content to-user-message-inner-content">
+                <div class="message-text-content">
+                  RESPOSTA IA 3: Sem a aplicação final do item, o terceiro lote deve retornar com pedido de complementação ao solicitante.
+                </div>
+              </mat-card-content>
+              <mat-card-actions class="message-actions">
+                <button aria-label="Copy model response to clipboard" class="xap-copy-to-clipboard">copy_all</button>
+                <button aria-label="Save to note">keep</button>
+              </mat-card-actions>
+              <div class="suggestions-container">
+                <button class="follow-up-chip">Draft the clarification request</button>
+              </div>
+            </mat-card>
+          </chat-message>
+        </div>
+
+        <div class="chat-message-pair ng-star-inserted" data-pair="4">
+          <chat-message class="individual-message from-user-container">
+            <mat-card class="from-user-message-card-content">
+              <mat-card-content class="message-content from-user-message-inner-content">
+                <div class="message-text-content">PROMPT 4: Verifique se há regra especial para software.</div>
+              </mat-card-content>
+            </mat-card>
+          </chat-message>
+          <chat-message class="individual-message to-user-container">
+            <mat-card class="to-user-message-card-content">
+              <mat-card-content class="message-content to-user-message-inner-content">
+                <div class="message-text-content">
+                  RESPOSTA IA 4: Para software, preciso saber se existe mídia física vinculada ou se a entrega é integralmente digital.
+                </div>
+              </mat-card-content>
+              <mat-card-actions class="message-actions">
+                <button aria-label="Copy model response to clipboard" class="xap-copy-to-clipboard">copy_all</button>
+                <button aria-label="Save to note">keep</button>
+              </mat-card-actions>
+              <div class="suggestions-container">
+                <button class="follow-up-chip">Explain the software rule</button>
+              </div>
+            </mat-card>
+          </chat-message>
+        </div>
+
+        <div class="chat-message-pair ng-star-inserted" data-pair="5">
+          <chat-message class="individual-message from-user-container">
+            <mat-card class="from-user-message-card-content">
+              <mat-card-content class="message-content from-user-message-inner-content">
+                <div class="message-text-content">PROMPT 5: Feche o transcript com a devolutiva final.</div>
+              </mat-card-content>
+            </mat-card>
+          </chat-message>
+          <chat-message class="individual-message to-user-container">
+            <mat-card class="to-user-message-card-content">
+              <mat-card-content class="message-content to-user-message-inner-content">
+                <div class="message-text-content">
+                  RESPOSTA IA 5: Prezado, para correta classificação, solicitamos a informação do material e ou aplicação válida do item.
+                </div>
+              </mat-card-content>
+              <mat-card-actions class="message-actions">
+                <button aria-label="Copy model response to clipboard" class="xap-copy-to-clipboard">copy_all</button>
+                <button aria-label="Save to note">keep</button>
+              </mat-card-actions>
+              <div class="suggestions-container">
+                <button class="follow-up-chip">Shorten the customer-facing message</button>
+              </div>
+            </mat-card>
+          </chat-message>
         </div>
       </chat-panel-content>
     </div>
