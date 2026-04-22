@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.2
+// @version      1.0.3
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -283,15 +283,6 @@ ${entry.responseText}`;
       { text: "Sexto item de exemplo." }
     ], null, 2);
   }
-  const COMPOSE_SELECTORS = [
-    'textarea[aria-label="Caixa de consulta"]',
-    'textarea[aria-label*="consulta"]',
-    'textarea[placeholder*="Comece a digitar"]',
-    'textarea[placeholder*="digitar"]',
-    "textarea",
-    '[contenteditable="true"]',
-    '[role="textbox"]'
-  ];
   const SEND_BUTTON_SELECTORS = [
     'button[aria-label="Enviar"]',
     'button[aria-label*="send"]',
@@ -359,6 +350,14 @@ ${entry.responseText}`;
     const label = `${element.getAttribute("aria-label") || ""} ${element.textContent || ""}`.toLowerCase();
     return patterns.some((pattern) => pattern.test(label));
   }
+  function isWritableControl(element) {
+    var _a, _b, _c;
+    if (!element) return false;
+    if ((_a = element.matches) == null ? void 0 : _a.call(element, "[disabled], [readonly]")) return false;
+    if (((_b = element.getAttribute) == null ? void 0 : _b.call(element, "formcontrolname")) === "discoverSourcesQuery") return false;
+    if ((_c = element.closest) == null ? void 0 : _c.call(element, '[formcontrolname="discoverSourcesQuery"]')) return false;
+    return true;
+  }
   function firstVisibleMatch(list, predicates) {
     for (const element of list) {
       if (!isVisible(element)) continue;
@@ -368,16 +367,28 @@ ${entry.responseText}`;
     return null;
   }
   function getComposeTextarea() {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
-    return firstVisibleMatch(editors, [
-      (element) => COMPOSE_SELECTORS.some((selector) => {
-        try {
-          return element.matches(selector);
-        } catch {
-          return false;
-        }
-      })
-    ]);
+    const candidates = [];
+    for (const element of editors) {
+      if (!isVisible(element)) continue;
+      if (isInsideShadowPanel(element)) continue;
+      if (!isWritableControl(element)) continue;
+      let score = -1;
+      if ((_a = element.matches) == null ? void 0 : _a.call(element, 'textarea.query-box-input[aria-label="Caixa de consulta"]')) score = 100;
+      else if ((_b = element.matches) == null ? void 0 : _b.call(element, "textarea.query-box-input")) score = 90;
+      else if ((_c = element.matches) == null ? void 0 : _c.call(element, 'textarea[aria-label="Caixa de consulta"]')) score = 80;
+      else if ((_d = element.matches) == null ? void 0 : _d.call(element, 'textarea[placeholder="Comece a digitar…"]')) score = 70;
+      else if ((_e = element.matches) == null ? void 0 : _e.call(element, 'textarea[placeholder*="Comece a digitar"]')) score = 60;
+      else if ((_f = element.matches) == null ? void 0 : _f.call(element, 'textarea[placeholder*="digitar"]')) score = 50;
+      else if ((_g = element.matches) == null ? void 0 : _g.call(element, '[contenteditable="true"]')) score = 40;
+      else if ((_h = element.matches) == null ? void 0 : _h.call(element, '[role="textbox"]')) score = 30;
+      if (score >= 0) {
+        candidates.push({ element, score });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return ((_i = candidates[0]) == null ? void 0 : _i.element) || null;
   }
   function getSendButton() {
     const buttons = queryAllDeep('button, [role="button"]');

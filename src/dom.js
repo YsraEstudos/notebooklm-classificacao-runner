@@ -1,11 +1,12 @@
 import { createAbortError, delay, normalizeDisplayText, normalizeSignatureText, stableHash, waitFor } from './utils';
 
 const COMPOSE_SELECTORS = [
+  'textarea.query-box-input[aria-label="Caixa de consulta"]',
+  'textarea.query-box-input',
   'textarea[aria-label="Caixa de consulta"]',
-  'textarea[aria-label*="consulta"]',
+  'textarea[placeholder="Comece a digitar…"]',
   'textarea[placeholder*="Comece a digitar"]',
   'textarea[placeholder*="digitar"]',
-  'textarea',
   '[contenteditable="true"]',
   '[role="textbox"]',
 ];
@@ -94,6 +95,14 @@ function labelMatches(element, patterns) {
   return patterns.some(pattern => pattern.test(label));
 }
 
+function isWritableControl(element) {
+  if (!element) return false;
+  if (element.matches?.('[disabled], [readonly]')) return false;
+  if (element.getAttribute?.('formcontrolname') === 'discoverSourcesQuery') return false;
+  if (element.closest?.('[formcontrolname="discoverSourcesQuery"]')) return false;
+  return true;
+}
+
 function firstVisibleMatch(list, predicates) {
   for (const element of list) {
     if (!isVisible(element)) continue;
@@ -105,15 +114,31 @@ function firstVisibleMatch(list, predicates) {
 
 export function getComposeTextarea() {
   const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
-  return firstVisibleMatch(editors, [
-    element => COMPOSE_SELECTORS.some(selector => {
-      try {
-        return element.matches(selector);
-      } catch {
-        return false;
-      }
-    }),
-  ]);
+  const candidates = [];
+
+  for (const element of editors) {
+    if (!isVisible(element)) continue;
+    if (isInsideShadowPanel(element)) continue;
+    if (!isWritableControl(element)) continue;
+
+    let score = -1;
+
+    if (element.matches?.('textarea.query-box-input[aria-label="Caixa de consulta"]')) score = 100;
+    else if (element.matches?.('textarea.query-box-input')) score = 90;
+    else if (element.matches?.('textarea[aria-label="Caixa de consulta"]')) score = 80;
+    else if (element.matches?.('textarea[placeholder="Comece a digitar…"]')) score = 70;
+    else if (element.matches?.('textarea[placeholder*="Comece a digitar"]')) score = 60;
+    else if (element.matches?.('textarea[placeholder*="digitar"]')) score = 50;
+    else if (element.matches?.('[contenteditable="true"]')) score = 40;
+    else if (element.matches?.('[role="textbox"]')) score = 30;
+
+    if (score >= 0) {
+      candidates.push({ element, score });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.element || null;
 }
 
 export function getSendButton() {
