@@ -2,7 +2,6 @@ import { ClassificacaoRunner } from './runner';
 import { ClassificacaoPanel } from './ui';
 import { createExampleJson } from './storage';
 
-const APP_HOST_ID = 'nlm-classificacao-host';
 let app = null;
 let panel = null;
 let lastPath = window.location.pathname;
@@ -126,16 +125,25 @@ function onGlobalKeyDown(event) {
 window.addEventListener('keydown', onGlobalKeyDown, true);
 
 function syncRoute() {
-  if (window.location.pathname === lastPath) return;
-  lastPath = window.location.pathname;
-  teardown();
+  const currentPath = window.location.pathname;
+
+  if (!isNotebookRoute()) {
+    if (app || panel) teardown();
+    return;
+  }
+
+  if (currentPath !== lastPath) {
+    lastPath = currentPath;
+    teardown();
+  }
+
   ensureApp();
 }
 
 setInterval(syncRoute, 1000);
 
 function boot() {
-  ensureApp();
+  syncRoute();
 }
 
 if (document.readyState === 'loading') {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.4
+// @version      1.0.6
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -197,7 +197,17 @@
       state.queue = Array.isArray(state.queue) ? state.queue : [];
       state.history = Array.isArray(state.history) ? state.history : [];
       state.nextIndex = Number.isFinite(state.nextIndex) ? state.nextIndex : 0;
+      state.collapsed = Boolean(state.collapsed);
+      state.launcherTop = Number.isFinite(state.launcherTop) ? state.launcherTop : 120;
       state.status = ["idle", "running", "paused", "stopped", "done", "error"].includes(state.status) ? state.status : "idle";
+      if (state.currentBatch && typeof state.currentBatch === "object") {
+        state.currentBatch = {
+          ...state.currentBatch,
+          baselineSignatures: Array.isArray(state.currentBatch.baselineSignatures) ? state.currentBatch.baselineSignatures.map((signature) => String(signature)) : []
+        };
+      } else {
+        state.currentBatch = null;
+      }
       if (state.status === "running") {
         state.status = "paused";
         state.lastInfo = "A execução anterior foi restaurada em pausa depois de recarregar a página.";
@@ -281,30 +291,10 @@ ${entry.responseText}`;
       { text: "Terceiro item de exemplo com outro conteúdo." },
       { text: "Quarto item de exemplo para mostrar continuidade." },
       { text: "Quinto item de exemplo." },
-      { text: "Sexto item de exemplo." }
+      { text: "Sexto item de exemplo." },
+      { text: "Sétimo item de exemplo para fechar o lote final." }
     ], null, 2);
   }
-  const SEND_BUTTON_SELECTORS = [
-    'button.submit-button[aria-label="Enviar"]',
-    "button.submit-button",
-    'button[aria-label="Enviar"]',
-    'button[aria-label*="send"]',
-    'button[type="submit"]'
-  ];
-  const RESPONSE_CARD_SELECTORS = [
-    "note-card",
-    ".note-card",
-    "mat-card",
-    "article",
-    '[role="article"]',
-    '[data-testid*="response"]',
-    '[data-testid*="answer"]',
-    '[data-testid*="note"]',
-    ".message",
-    ".answer",
-    ".assistant-message",
-    ".response"
-  ];
   function queryAllDeep(selector, root = document) {
     const results = [];
     const seen = /* @__PURE__ */ new Set();
@@ -326,6 +316,14 @@ ${entry.responseText}`;
       }
     }
     return results;
+  }
+  function getNormalizedControlText(element) {
+    var _a, _b;
+    return normalizeSignatureText([
+      (_a = element == null ? void 0 : element.getAttribute) == null ? void 0 : _a.call(element, "aria-label"),
+      (_b = element == null ? void 0 : element.getAttribute) == null ? void 0 : _b.call(element, "placeholder"),
+      element == null ? void 0 : element.textContent
+    ].filter(Boolean).join(" "));
   }
   function isVisible(element) {
     if (!element || element.nodeType !== 1) return false;
@@ -353,13 +351,94 @@ ${entry.responseText}`;
     const label = `${element.getAttribute("aria-label") || ""} ${element.textContent || ""}`.toLowerCase();
     return patterns.some((pattern) => pattern.test(label));
   }
-  function isWritableControl(element) {
-    var _a, _b, _c;
-    if (!element) return false;
-    if ((_a = element.matches) == null ? void 0 : _a.call(element, "[disabled], [readonly]")) return false;
-    if (((_b = element.getAttribute) == null ? void 0 : _b.call(element, "formcontrolname")) === "discoverSourcesQuery") return false;
-    if ((_c = element.closest) == null ? void 0 : _c.call(element, '[formcontrolname="discoverSourcesQuery"]')) return false;
-    return true;
+  function getComposeScore(element) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    if (!element || !isVisible(element) || isInsideShadowPanel(element)) return -1;
+    if ((_a = element.matches) == null ? void 0 : _a.call(element, "[disabled], [readonly]")) return -1;
+    if ((_b = element.closest) == null ? void 0 : _b.call(element, '[formcontrolname="discoverSourcesQuery"]')) return -1;
+    const labelText = getNormalizedControlText(element);
+    if (/discover\s*sources?/.test(labelText)) return -1;
+    if (/pesquise\s+fontes/.test(labelText)) return -1;
+    if (/search\s*sources?/.test(labelText)) return -1;
+    if (/source\s*query/.test(labelText)) return -1;
+    let score = -1;
+    if ((_c = element.matches) == null ? void 0 : _c.call(element, 'textarea.query-box-input[aria-label="Query box"]')) score = 120;
+    else if ((_d = element.matches) == null ? void 0 : _d.call(element, 'textarea.query-box-input[aria-label="Caixa de consulta"]')) score = 120;
+    else if ((_e = element.matches) == null ? void 0 : _e.call(element, "textarea.query-box-input")) score = 100;
+    else if (/^query box$/.test(labelText)) score = 95;
+    else if (/^caixa de consulta$/.test(labelText)) score = 95;
+    else if ((_f = element.matches) == null ? void 0 : _f.call(element, 'textarea[aria-label="Query box"]')) score = 90;
+    else if ((_g = element.matches) == null ? void 0 : _g.call(element, 'textarea[aria-label="Caixa de consulta"]')) score = 90;
+    else if ((_h = element.matches) == null ? void 0 : _h.call(element, 'textarea[placeholder="Start typing..."]')) score = 90;
+    else if ((_i = element.matches) == null ? void 0 : _i.call(element, 'textarea[placeholder*="Start typing"]')) score = 80;
+    else if ((_j = element.matches) == null ? void 0 : _j.call(element, 'textarea[placeholder*="Comece a digitar"]')) score = 80;
+    else if ((_k = element.matches) == null ? void 0 : _k.call(element, 'textarea[placeholder*="digitar"]')) score = 70;
+    else if ((_l = element.matches) == null ? void 0 : _l.call(element, '[contenteditable="true"]')) score = 45;
+    else if ((_m = element.matches) == null ? void 0 : _m.call(element, '[role="textbox"]')) score = 35;
+    else if ((_n = element.matches) == null ? void 0 : _n.call(element, "textarea")) score = 20;
+    if (score < 0) return -1;
+    if ((_o = element.closest) == null ? void 0 : _o.call(element, "form")) score += 25;
+    if ((_p = element.closest) == null ? void 0 : _p.call(element, ".message-container")) score += 15;
+    if ((_q = element.closest) == null ? void 0 : _q.call(element, ".input-group")) score += 10;
+    if ((_r = element.closest) == null ? void 0 : _r.call(element, "query-box")) score += 10;
+    if ((_s = element.closest) == null ? void 0 : _s.call(element, ".bottom-container")) score += 5;
+    return score;
+  }
+  function getSubmitButtonScore(button, composerTextarea = null) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    if (!button || !isVisible(button) || isInsideShadowPanel(button)) return -1;
+    const labelText = getNormalizedControlText(button);
+    let score = -1;
+    if ((_a = button.matches) == null ? void 0 : _a.call(button, 'button.submit-button[aria-label="Submit"]')) score = 120;
+    else if ((_b = button.matches) == null ? void 0 : _b.call(button, 'button.submit-button[aria-label="Enviar"]')) score = 120;
+    else if ((_c = button.matches) == null ? void 0 : _c.call(button, "button.submit-button")) score = 100;
+    else if ((_d = button.matches) == null ? void 0 : _d.call(button, 'button[type="submit"]')) score = 90;
+    else if (/^(submit|enviar)$/.test(labelText)) score = 80;
+    else if (labelText.includes("submit") || labelText.includes("enviar") || labelText.includes("arrow_forward")) score = 60;
+    else if ((_e = button.matches) == null ? void 0 : _e.call(button, "button")) score = 20;
+    if (score < 0) return -1;
+    if (score === 20 && !((_f = button.closest) == null ? void 0 : _f.call(button, "form")) && !((_g = button.closest) == null ? void 0 : _g.call(button, ".bottom-right-container")) && !((_h = button.closest) == null ? void 0 : _h.call(button, ".message-container")) && !((_i = button.closest) == null ? void 0 : _i.call(button, ".input-group"))) {
+      return -1;
+    }
+    if ((_j = button.closest) == null ? void 0 : _j.call(button, "form")) score += 25;
+    if ((_k = button.closest) == null ? void 0 : _k.call(button, ".bottom-right-container")) score += 15;
+    if ((_l = button.closest) == null ? void 0 : _l.call(button, ".message-container")) score += 10;
+    if ((_m = button.closest) == null ? void 0 : _m.call(button, ".input-group")) score += 10;
+    if (composerTextarea && ((_n = button.closest) == null ? void 0 : _n.call(button, "form")) === ((_o = composerTextarea.closest) == null ? void 0 : _o.call(composerTextarea, "form"))) {
+      score += 20;
+    }
+    return score;
+  }
+  function getBestSubmitButton(root, composerTextarea = null) {
+    var _a;
+    const buttons = queryAllDeep('button, [role="button"]', root || document);
+    const candidates = [];
+    for (const element of buttons) {
+      const score = getSubmitButtonScore(element, composerTextarea);
+      if (score < 0) continue;
+      candidates.push({ element, score });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return ((_a = candidates[0]) == null ? void 0 : _a.element) || null;
+  }
+  function getComposeContext() {
+    var _a;
+    const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
+    const candidates = [];
+    for (const element of editors) {
+      const score = getComposeScore(element);
+      if (score < 0) continue;
+      const form = ((_a = element.closest) == null ? void 0 : _a.call(element, "form")) || null;
+      const button = getBestSubmitButton(form || document, element) || getBestSubmitButton(document, element);
+      candidates.push({
+        element,
+        form,
+        button,
+        score: score + (button ? 15 : 0)
+      });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0] || null;
   }
   function isEnabledButton(element) {
     var _a, _b;
@@ -370,56 +449,12 @@ ${entry.responseText}`;
     return true;
   }
   function getComposeTextarea() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
-    const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
-    const candidates = [];
-    for (const element of editors) {
-      if (!isVisible(element)) continue;
-      if (isInsideShadowPanel(element)) continue;
-      if (!isWritableControl(element)) continue;
-      let score = -1;
-      if ((_a = element.matches) == null ? void 0 : _a.call(element, 'textarea.query-box-input[aria-label="Caixa de consulta"]')) score = 100;
-      else if ((_b = element.matches) == null ? void 0 : _b.call(element, "textarea.query-box-input")) score = 90;
-      else if ((_c = element.matches) == null ? void 0 : _c.call(element, 'textarea[aria-label="Caixa de consulta"]')) score = 80;
-      else if ((_d = element.matches) == null ? void 0 : _d.call(element, 'textarea[placeholder="Comece a digitar…"]')) score = 70;
-      else if ((_e = element.matches) == null ? void 0 : _e.call(element, 'textarea[placeholder*="Comece a digitar"]')) score = 60;
-      else if ((_f = element.matches) == null ? void 0 : _f.call(element, 'textarea[placeholder*="digitar"]')) score = 50;
-      else if ((_g = element.matches) == null ? void 0 : _g.call(element, '[contenteditable="true"]')) score = 40;
-      else if ((_h = element.matches) == null ? void 0 : _h.call(element, '[role="textbox"]')) score = 30;
-      if (score >= 0) {
-        candidates.push({ element, score });
-      }
-    }
-    candidates.sort((a, b) => b.score - a.score);
-    return ((_i = candidates[0]) == null ? void 0 : _i.element) || null;
+    var _a;
+    return ((_a = getComposeContext()) == null ? void 0 : _a.element) || null;
   }
   function getSendButton() {
-    var _a, _b, _c, _d, _e;
-    const composeForm = ((_b = (_a = getComposeTextarea()) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "form")) || null;
-    const buttons = queryAllDeep('button, [role="button"]', composeForm || document);
-    const candidates = [];
-    for (const element of buttons) {
-      if (!isVisible(element)) continue;
-      if (isInsideShadowPanel(element)) continue;
-      let score = -1;
-      if (SEND_BUTTON_SELECTORS.some((selector) => {
-        try {
-          return element.matches(selector);
-        } catch {
-          return false;
-        }
-      })) {
-        score = 100;
-      } else if (labelMatches(element, [/enviar/, /send/])) {
-        score = 60;
-      }
-      if (score < 0) continue;
-      if ((_c = element.closest) == null ? void 0 : _c.call(element, "form")) score += 20;
-      if ((_d = element.closest) == null ? void 0 : _d.call(element, ".message-container")) score += 10;
-      candidates.push({ element, score });
-    }
-    candidates.sort((a, b) => b.score - a.score);
-    return ((_e = candidates[0]) == null ? void 0 : _e.element) || null;
+    var _a;
+    return ((_a = getComposeContext()) == null ? void 0 : _a.button) || null;
   }
   function setTextareaValue(textarea, value) {
     var _a, _b;
@@ -427,7 +462,10 @@ ${entry.responseText}`;
     const isTextInput = textarea instanceof HTMLTextAreaElement || textarea instanceof HTMLInputElement;
     const isContentEditable = (textarea == null ? void 0 : textarea.isContentEditable) || ((_a = textarea == null ? void 0 : textarea.getAttribute) == null ? void 0 : _a.call(textarea, "contenteditable")) === "true";
     if (isTextInput) {
-      const nativeSetter = (_b = Object.getOwnPropertyDescriptor(isTextInput && textarea instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, "value")) == null ? void 0 : _b.set;
+      const nativeSetter = (_b = Object.getOwnPropertyDescriptor(
+        textarea instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype,
+        "value"
+      )) == null ? void 0 : _b.set;
       if (nativeSetter) {
         nativeSetter.call(textarea, text);
       } else {
@@ -441,6 +479,13 @@ ${entry.responseText}`;
     } else {
       textarea.textContent = text;
     }
+    textarea.dispatchEvent(new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      data: text,
+      inputType: "insertText"
+    }));
     textarea.dispatchEvent(new InputEvent("input", {
       bubbles: true,
       cancelable: true,
@@ -492,104 +537,178 @@ ${entry.responseText}`;
     }, { timeoutMs: 1e4, intervalMs: 250, signal });
   }
   async function activateSubmitButton(button, signal) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     if (!button) return false;
     const form = ((_a = button.closest) == null ? void 0 : _a.call(button, "form")) || null;
     const touchTarget = (_b = button.querySelector) == null ? void 0 : _b.call(button, ".mat-mdc-button-touch-target");
+    let submitSeen = false;
     try {
       (_c = button.focus) == null ? void 0 : _c.call(button, { preventScroll: true });
     } catch {
       (_d = button.focus) == null ? void 0 : _d.call(button);
     }
-    try {
-      (_e = button.click) == null ? void 0 : _e.call(button);
-    } catch {
-    }
-    if (touchTarget && typeof touchTarget.click === "function") {
+    const onSubmit = () => {
+      submitSeen = true;
+    };
+    form == null ? void 0 : form.addEventListener("submit", onSubmit, { capture: true, once: true });
+    const attempt = async (action) => {
+      if (submitSeen || (signal == null ? void 0 : signal.aborted)) return;
       try {
+        action == null ? void 0 : action();
+      } catch {
+      }
+      await delay(75, signal);
+    };
+    await attempt(() => {
+      var _a2;
+      if (touchTarget && typeof touchTarget.click === "function") {
         touchTarget.click();
-      } catch {
+        return;
       }
-    }
-    if (form == null ? void 0 : form.requestSubmit) {
-      try {
-        form.requestSubmit(button);
-      } catch {
+      (_a2 = button.click) == null ? void 0 : _a2.call(button);
+    });
+    await attempt(() => {
+      var _a2;
+      (_a2 = button.click) == null ? void 0 : _a2.call(button);
+    });
+    if (!submitSeen && (form == null ? void 0 : form.requestSubmit)) {
+      await attempt(() => {
         try {
-          form.requestSubmit();
+          form.requestSubmit(button);
         } catch {
+          form.requestSubmit();
         }
-      }
-    } else if (form) {
-      try {
+      });
+    }
+    if (!submitSeen && form) {
+      await attempt(() => {
         form.dispatchEvent(new Event("submit", {
           bubbles: true,
           cancelable: true,
           composed: true
         }));
-      } catch {
-      }
+      });
     }
-    await delay(75, signal);
     return true;
   }
   function cloneWithoutControls(element) {
     const clone = element.cloneNode(true);
-    clone.querySelectorAll('button, [role="button"], input, textarea, script, style, svg, mat-icon, .mat-mdc-button-touch-target, [aria-hidden="true"]').forEach((node) => node.remove());
+    clone.querySelectorAll([
+      "button",
+      '[role="button"]',
+      "input",
+      "textarea",
+      "script",
+      "style",
+      "svg",
+      "mat-icon",
+      ".mat-mdc-button-touch-target",
+      '[aria-hidden="true"]',
+      "chat-panel-header",
+      ".chat-panel-empty-state-action-bar",
+      ".suggestions-container"
+    ].join(", ")).forEach((node) => node.remove());
     return clone;
+  }
+  function getResponseRootElement(element) {
+    var _a, _b;
+    if (!element) return null;
+    if ((_a = element.matches) == null ? void 0 : _a.call(element, ".notebook-summary")) return element;
+    const directSummary = (_b = element.querySelector) == null ? void 0 : _b.call(element, ".notebook-summary");
+    if (directSummary) return directSummary;
+    return element;
+  }
+  function getResponseContainerFromButton(button) {
+    var _a, _b, _c;
+    const selector = [
+      ".notebook-summary",
+      ".chat-panel-empty-state",
+      ".chat-panel-content",
+      ".chat-panel-response",
+      ".chat-panel-message",
+      "note-card",
+      ".note-card",
+      "mat-card",
+      "article",
+      '[role="article"]',
+      '[data-testid*="response"]',
+      '[data-testid*="answer"]',
+      '[data-testid*="note"]',
+      ".message",
+      ".answer",
+      ".assistant-message",
+      ".response"
+    ].join(", ");
+    const card = (_a = button.closest) == null ? void 0 : _a.call(button, selector);
+    if (card) return card;
+    let current = button.parentElement;
+    while (current && current !== document.body) {
+      if ((_b = current.matches) == null ? void 0 : _b.call(current, "section, article, mat-card, div, note-card, chat-panel-content, chat-panel")) {
+        const summaryNode = (_c = current.querySelector) == null ? void 0 : _c.call(current, ".notebook-summary");
+        const text = normalizeDisplayText((summaryNode == null ? void 0 : summaryNode.textContent) || current.textContent || "");
+        if (text.length >= 20) return current;
+      }
+      current = current.parentElement;
+    }
+    return button.parentElement || button;
   }
   function extractResponseText(element) {
     if (!element) return "";
-    const clone = cloneWithoutControls(element);
-    return normalizeDisplayText(clone.innerText || clone.textContent || "");
+    const source = getResponseRootElement(element);
+    const clone = cloneWithoutControls(source);
+    const extracted = normalizeDisplayText(clone.innerText || clone.textContent || "");
+    if (extracted) return extracted;
+    return normalizeDisplayText(source.innerText || source.textContent || "");
   }
   function getCandidateSignature(element) {
     return stableHash(normalizeSignatureText(extractResponseText(element)));
   }
   function getCardContainerFromButton(button) {
-    var _a;
-    const selector = RESPONSE_CARD_SELECTORS.join(",");
-    const card = button.closest(selector);
-    if (card) return card;
-    let current = button.parentElement;
-    while (current && current !== document.body) {
-      if ((_a = current.matches) == null ? void 0 : _a.call(current, "section, article, mat-card, div, note-card")) {
-        const text = extractResponseText(current);
-        if (text.length >= 20) return current;
-      }
-      current = current.parentElement;
-    }
-    return null;
+    return getResponseContainerFromButton(button);
   }
   function collectResponseCandidates() {
-    const selector = RESPONSE_CARD_SELECTORS.join(",");
     const candidates = [];
     const seen = /* @__PURE__ */ new Set();
-    const copyButtons = queryAllDeep('button, [role="button"]').filter((button) => {
+    const addCandidate = (element) => {
+      if (!element || seen.has(element) || !isVisible(element) || isInsideShadowPanel(element)) return;
+      const text = extractResponseText(element);
+      if (text.length < 20) return;
+      candidates.push(element);
+      seen.add(element);
+    };
+    queryAllDeep(".notebook-summary").forEach(addCandidate);
+    queryAllDeep('button, [role="button"]').filter((button) => {
       if (!isVisible(button) || isInsideShadowPanel(button)) return false;
       return labelMatches(button, [/copi/, /copy/]);
-    });
-    for (const button of copyButtons) {
+    }).forEach((button) => {
       const card = getCardContainerFromButton(button);
-      if (card && !seen.has(card)) {
-        candidates.push(card);
-        seen.add(card);
-      }
-    }
-    const genericCards = queryAllDeep(selector).filter((element) => {
-      if (!isVisible(element) || isInsideShadowPanel(element)) return false;
-      const text = extractResponseText(element);
-      return text.length >= 20;
+      addCandidate(card);
     });
-    for (const card of genericCards) {
-      if (!seen.has(card)) {
-        candidates.push(card);
-        seen.add(card);
-      }
-    }
+    queryAllDeep([
+      ".chat-panel-empty-state",
+      ".chat-panel-content",
+      ".chat-panel-response",
+      ".chat-panel-message",
+      "note-card",
+      ".note-card",
+      "mat-card",
+      "article",
+      '[role="article"]',
+      '[data-testid*="response"]',
+      '[data-testid*="answer"]',
+      '[data-testid*="note"]',
+      ".message",
+      ".answer",
+      ".assistant-message",
+      ".response"
+    ].join(",")).forEach(addCandidate);
     return candidates;
   }
+  function snapshotResponseSignatures() {
+    return [...new Set(collectResponseCandidates().map((candidate) => getCandidateSignature(candidate)).filter(Boolean))];
+  }
   function findLatestResponseCandidate({ excludeSignatures = /* @__PURE__ */ new Set() } = {}) {
+    var _a;
     const candidates = collectResponseCandidates();
     for (let index = candidates.length - 1; index >= 0; index -= 1) {
       const candidate = candidates[index];
@@ -597,7 +716,8 @@ ${entry.responseText}`;
       if (text.length < 20) continue;
       const signature = getCandidateSignature(candidate);
       if (excludeSignatures.has(signature)) continue;
-      const copyButton = [...candidate.querySelectorAll("button")].find((button) => labelMatches(button, [/copi/, /copy/]));
+      const copyRoot = ((_a = candidate.matches) == null ? void 0 : _a.call(candidate, ".notebook-summary")) ? candidate.parentElement || candidate : candidate;
+      const copyButton = [...copyRoot.querySelectorAll("button")].find((button) => labelMatches(button, [/copi/, /copy/]));
       return {
         element: candidate,
         text,
@@ -608,8 +728,10 @@ ${entry.responseText}`;
     return null;
   }
   function clickNativeCopyButton(candidateElement) {
+    var _a;
     if (!candidateElement) return false;
-    const copyButton = [...candidateElement.querySelectorAll("button")].find((button) => {
+    const root = ((_a = candidateElement.matches) == null ? void 0 : _a.call(candidateElement, ".notebook-summary")) ? candidateElement.parentElement || candidateElement : candidateElement;
+    const copyButton = [...root.querySelectorAll("button")].find((button) => {
       return labelMatches(button, [/copi/, /copy/]);
     });
     if (!copyButton) return false;
@@ -640,6 +762,7 @@ ${entry.responseText}`;
   }
   const BATCH_SIZE = 3;
   const WAIT_MS = 9e4;
+  const CAPTURE_TIMEOUT_MS = 45e3;
   function formatError(error) {
     if (!error) return "Erro desconhecido.";
     if (error instanceof Error && error.message) return error.message;
@@ -811,11 +934,11 @@ ${entry.responseText}`;
         running: false,
         paused: false,
         nextIndex: 0,
-        history: [],
+        history: Array.isArray(this.state.history) ? [...this.state.history] : [],
         currentBatch: null,
         lastCapturedSignature: "",
         lastError: "",
-        lastInfo: hasQueue ? "Progresso apagado. Clique em Start para recomeçar do item 1." : "Progresso apagado. Carregue um JSON para começar.",
+        lastInfo: hasQueue ? "Progresso zerado. A fila voltou ao item 1 sem apagar o histórico." : "Progresso zerado. Carregue um JSON para começar.",
         runId: `run_${Date.now()}`
       });
     }
@@ -857,6 +980,7 @@ ${entry.responseText}`;
           const batchNumber = Math.floor(cursor / BATCH_SIZE) + 1;
           const promptText = buildBatchText(batch);
           const batchId = `batch_${Date.now()}_${cursor}`;
+          const baselineSignatures = snapshotResponseSignatures();
           const initialBatchState = {
             id: batchId,
             batchNumber,
@@ -865,6 +989,7 @@ ${entry.responseText}`;
             itemCount: batch.length,
             items: batch.map((item) => item.text),
             promptText,
+            baselineSignatures,
             phase: "sending",
             sentAt: null,
             waitDeadlineAt: null,
@@ -903,7 +1028,7 @@ ${entry.responseText}`;
               remainingMs: 0
             }
           });
-          const candidate = await this.captureLatestResponse(signal);
+          const candidate = await this.captureLatestResponse(signal, baselineSignatures);
           if (!candidate) {
             throw new Error("Não encontrei uma resposta nova para o lote atual.");
           }
@@ -961,6 +1086,7 @@ ${entry.responseText}`;
     async finishCurrentBatch(signal) {
       const current = this.state.currentBatch;
       if (!current) return;
+      const baselineSignatures = Array.isArray(current.baselineSignatures) ? current.baselineSignatures : [];
       if (current.phase === "waiting" && current.waitDeadlineAt) {
         await waitForBatchDeadline(current.waitDeadlineAt, signal, (remaining) => {
           this.persist({
@@ -971,7 +1097,7 @@ ${entry.responseText}`;
           });
         });
       }
-      const candidate = await this.captureLatestResponse(signal);
+      const candidate = await this.captureLatestResponse(signal, baselineSignatures);
       if (!candidate) {
         throw new Error("Não encontrei uma resposta nova para o lote retomado.");
       }
@@ -1000,17 +1126,20 @@ ${entry.responseText}`;
       });
       clickNativeCopyButton(candidate.element);
     }
-    async captureLatestResponse(signal) {
-      const excludedSignature = this.state.lastCapturedSignature;
-      const deadline = Date.now() + 15e3;
+    async captureLatestResponse(signal, baselineSignatures = []) {
+      const excluded = new Set([
+        this.state.lastCapturedSignature,
+        ...baselineSignatures
+      ].filter(Boolean).map((value) => String(value)));
+      const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
       while (!signal.aborted && Date.now() < deadline) {
         const candidate = findLatestResponseCandidate({
-          excludeSignatures: excludedSignature ? /* @__PURE__ */ new Set([excludedSignature]) : /* @__PURE__ */ new Set()
+          excludeSignatures: excluded
         });
         if (candidate) {
           const normalizedText = normalizeDisplayText(candidate.text);
           const signature = candidate.signature;
-          if (signature && signature !== excludedSignature && normalizedText.length >= 20) {
+          if (signature && !excluded.has(signature) && normalizedText.length >= 20) {
             return candidate;
           }
         }
@@ -1027,7 +1156,7 @@ ${entry.responseText}`;
     }
   }
   const PANEL_WIDTH = 392;
-  const HANDLE_WIDTH = 72;
+  const LAUNCHER_SIZE = 56;
   const DEFAULT_LAUNCHER_TOP = 120;
   function createElement(tag, className, textContent) {
     const element = document.createElement(tag);
@@ -1146,18 +1275,20 @@ ${entry.responseText}`;
       .nlm-shell {
         position: fixed;
         inset: 0 auto 0 0;
-        width: min(${PANEL_WIDTH}px, calc(100vw - 16px));
+        width: 0;
         z-index: 2147483647;
         pointer-events: none;
+        overflow: visible;
         font-family: "Google Sans Text", "Google Sans", "Segoe UI", sans-serif;
         color: #eef2ff;
         --nlm-launcher-top: ${DEFAULT_LAUNCHER_TOP}px;
+        --nlm-launcher-size: ${LAUNCHER_SIZE}px;
       }
 
       .nlm-panel {
-        position: absolute;
+        position: fixed;
         inset: 0 auto 0 0;
-        width: 100%;
+        width: min(${PANEL_WIDTH}px, calc(100vw - 16px));
         pointer-events: auto;
         background:
           radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 30%),
@@ -1179,7 +1310,7 @@ ${entry.responseText}`;
         background: transparent;
         border-right-color: transparent;
         box-shadow: none;
-        transform: translateX(calc(-100% + ${HANDLE_WIDTH}px));
+        transform: translateX(calc(-100% - 16px));
         pointer-events: none;
       }
 
@@ -1201,21 +1332,24 @@ ${entry.responseText}`;
       }
 
       .nlm-rail {
-        position: absolute;
-        inset: 0 auto 0 0;
-        width: ${HANDLE_WIDTH}px;
+        position: fixed;
+        left: 12px;
+        top: var(--nlm-launcher-top);
+        width: calc(var(--nlm-launcher-size) + 6px);
+        height: calc(var(--nlm-launcher-size) + 6px);
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: center;
         pointer-events: auto;
         opacity: 1;
         transition: opacity 160ms ease, transform 180ms ease;
+        z-index: 2;
       }
 
       .nlm-shell:not(.is-collapsed) .nlm-rail {
         opacity: 0;
         pointer-events: none;
-        transform: translateX(-8px);
+        transform: translateX(-10px) scale(0.92);
       }
 
       .nlm-shell.is-collapsed .nlm-rail,
@@ -1224,11 +1358,9 @@ ${entry.responseText}`;
       }
 
       .nlm-rail-button {
-        position: absolute;
-        left: 50%;
-        top: var(--nlm-launcher-top);
-        width: 60px;
-        height: 60px;
+        position: relative;
+        width: 100%;
+        height: 100%;
         border-radius: 20px;
         border: 1px solid rgba(148, 163, 184, 0.22);
         background:
@@ -1245,10 +1377,10 @@ ${entry.responseText}`;
         font-weight: 800;
         cursor: grab;
         box-shadow:
-          0 12px 28px rgba(15, 23, 42, 0.34),
-          0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-        transform: translateX(-50%) translateY(0) scale(1);
-        transition: transform 160ms ease, box-shadow 180ms ease, filter 180ms ease;
+          0 14px 30px rgba(15, 23, 42, 0.38),
+          0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+        transform: translateY(0) scale(1);
+        transition: transform 160ms ease, box-shadow 180ms ease, filter 180ms ease, opacity 180ms ease;
         overflow: hidden;
         touch-action: none;
         user-select: none;
@@ -1277,13 +1409,21 @@ ${entry.responseText}`;
 
       .nlm-rail-button:active {
         cursor: grabbing;
-        transform: translateX(-50%) translateY(1px) scale(0.98);
+        transform: translateY(1px) scale(0.98);
       }
 
       .nlm-shell.is-collapsed .nlm-rail-button {
         animation:
           nlm-button-float 4.8s ease-in-out infinite,
           nlm-button-pulse 5.4s ease-in-out infinite;
+      }
+
+      .nlm-shell.is-collapsed .nlm-rail-button:hover {
+        filter: brightness(1.08);
+        box-shadow:
+          0 18px 36px rgba(15, 23, 42, 0.48),
+          0 0 0 1px rgba(255, 255, 255, 0.16) inset,
+          0 0 0 10px rgba(56, 189, 248, 0.08);
       }
 
       .nlm-shell.is-launcher-dragging .nlm-rail-button {
@@ -1300,12 +1440,12 @@ ${entry.responseText}`;
       }
 
       .nlm-rail-badge {
-        font-size: 12px;
-        letter-spacing: 0.18em;
+        font-size: 11px;
+        letter-spacing: 0.14em;
       }
 
       .nlm-rail-hint {
-        font-size: 12px;
+        font-size: 11px;
         letter-spacing: 0.02em;
         opacity: 0.9;
       }
@@ -1623,10 +1763,10 @@ ${entry.responseText}`;
 
       @keyframes nlm-button-float {
         0%, 100% {
-          transform: translateX(-50%) translateY(0) scale(1);
+          transform: translateY(0) scale(1);
         }
         50% {
-          transform: translateX(-50%) translateY(-5px) scale(1.01);
+          transform: translateY(-5px) scale(1.01);
         }
       }
 
@@ -2160,14 +2300,20 @@ ${entry.responseText}`;
   }
   window.addEventListener("keydown", onGlobalKeyDown, true);
   function syncRoute() {
-    if (window.location.pathname === lastPath) return;
-    lastPath = window.location.pathname;
-    teardown();
+    const currentPath = window.location.pathname;
+    if (!isNotebookRoute()) {
+      if (app || panel) teardown();
+      return;
+    }
+    if (currentPath !== lastPath) {
+      lastPath = currentPath;
+      teardown();
+    }
     ensureApp();
   }
   setInterval(syncRoute, 1e3);
   function boot() {
-    ensureApp();
+    syncRoute();
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => setTimeout(boot, 800), { once: true });

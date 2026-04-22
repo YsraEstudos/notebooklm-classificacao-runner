@@ -2,7 +2,7 @@ import { downloadText, formatDateTime, formatDuration } from './utils';
 import { createExampleJson } from './storage';
 
 const PANEL_WIDTH = 392;
-const HANDLE_WIDTH = 72;
+const LAUNCHER_SIZE = 56;
 const DEFAULT_LAUNCHER_TOP = 120;
 
 function createElement(tag, className, textContent) {
@@ -138,18 +138,20 @@ export class ClassificacaoPanel {
       .nlm-shell {
         position: fixed;
         inset: 0 auto 0 0;
-        width: min(${PANEL_WIDTH}px, calc(100vw - 16px));
+        width: 0;
         z-index: 2147483647;
         pointer-events: none;
+        overflow: visible;
         font-family: "Google Sans Text", "Google Sans", "Segoe UI", sans-serif;
         color: #eef2ff;
         --nlm-launcher-top: ${DEFAULT_LAUNCHER_TOP}px;
+        --nlm-launcher-size: ${LAUNCHER_SIZE}px;
       }
 
       .nlm-panel {
-        position: absolute;
+        position: fixed;
         inset: 0 auto 0 0;
-        width: 100%;
+        width: min(${PANEL_WIDTH}px, calc(100vw - 16px));
         pointer-events: auto;
         background:
           radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 30%),
@@ -171,7 +173,7 @@ export class ClassificacaoPanel {
         background: transparent;
         border-right-color: transparent;
         box-shadow: none;
-        transform: translateX(calc(-100% + ${HANDLE_WIDTH}px));
+        transform: translateX(calc(-100% - 16px));
         pointer-events: none;
       }
 
@@ -193,21 +195,24 @@ export class ClassificacaoPanel {
       }
 
       .nlm-rail {
-        position: absolute;
-        inset: 0 auto 0 0;
-        width: ${HANDLE_WIDTH}px;
+        position: fixed;
+        left: 12px;
+        top: var(--nlm-launcher-top);
+        width: calc(var(--nlm-launcher-size) + 6px);
+        height: calc(var(--nlm-launcher-size) + 6px);
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: center;
         pointer-events: auto;
         opacity: 1;
         transition: opacity 160ms ease, transform 180ms ease;
+        z-index: 2;
       }
 
       .nlm-shell:not(.is-collapsed) .nlm-rail {
         opacity: 0;
         pointer-events: none;
-        transform: translateX(-8px);
+        transform: translateX(-10px) scale(0.92);
       }
 
       .nlm-shell.is-collapsed .nlm-rail,
@@ -216,11 +221,9 @@ export class ClassificacaoPanel {
       }
 
       .nlm-rail-button {
-        position: absolute;
-        left: 50%;
-        top: var(--nlm-launcher-top);
-        width: 60px;
-        height: 60px;
+        position: relative;
+        width: 100%;
+        height: 100%;
         border-radius: 20px;
         border: 1px solid rgba(148, 163, 184, 0.22);
         background:
@@ -237,10 +240,10 @@ export class ClassificacaoPanel {
         font-weight: 800;
         cursor: grab;
         box-shadow:
-          0 12px 28px rgba(15, 23, 42, 0.34),
-          0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-        transform: translateX(-50%) translateY(0) scale(1);
-        transition: transform 160ms ease, box-shadow 180ms ease, filter 180ms ease;
+          0 14px 30px rgba(15, 23, 42, 0.38),
+          0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+        transform: translateY(0) scale(1);
+        transition: transform 160ms ease, box-shadow 180ms ease, filter 180ms ease, opacity 180ms ease;
         overflow: hidden;
         touch-action: none;
         user-select: none;
@@ -269,13 +272,21 @@ export class ClassificacaoPanel {
 
       .nlm-rail-button:active {
         cursor: grabbing;
-        transform: translateX(-50%) translateY(1px) scale(0.98);
+        transform: translateY(1px) scale(0.98);
       }
 
       .nlm-shell.is-collapsed .nlm-rail-button {
         animation:
           nlm-button-float 4.8s ease-in-out infinite,
           nlm-button-pulse 5.4s ease-in-out infinite;
+      }
+
+      .nlm-shell.is-collapsed .nlm-rail-button:hover {
+        filter: brightness(1.08);
+        box-shadow:
+          0 18px 36px rgba(15, 23, 42, 0.48),
+          0 0 0 1px rgba(255, 255, 255, 0.16) inset,
+          0 0 0 10px rgba(56, 189, 248, 0.08);
       }
 
       .nlm-shell.is-launcher-dragging .nlm-rail-button {
@@ -292,12 +303,12 @@ export class ClassificacaoPanel {
       }
 
       .nlm-rail-badge {
-        font-size: 12px;
-        letter-spacing: 0.18em;
+        font-size: 11px;
+        letter-spacing: 0.14em;
       }
 
       .nlm-rail-hint {
-        font-size: 12px;
+        font-size: 11px;
         letter-spacing: 0.02em;
         opacity: 0.9;
       }
@@ -615,10 +626,10 @@ export class ClassificacaoPanel {
 
       @keyframes nlm-button-float {
         0%, 100% {
-          transform: translateX(-50%) translateY(0) scale(1);
+          transform: translateY(0) scale(1);
         }
         50% {
-          transform: translateX(-50%) translateY(-5px) scale(1.01);
+          transform: translateY(-5px) scale(1.01);
         }
       }
 

@@ -1,39 +1,5 @@
 import { createAbortError, delay, normalizeDisplayText, normalizeSignatureText, stableHash, waitFor } from './utils';
 
-const COMPOSE_SELECTORS = [
-  'textarea.query-box-input[aria-label="Caixa de consulta"]',
-  'textarea.query-box-input',
-  'textarea[aria-label="Caixa de consulta"]',
-  'textarea[placeholder="Comece a digitar…"]',
-  'textarea[placeholder*="Comece a digitar"]',
-  'textarea[placeholder*="digitar"]',
-  '[contenteditable="true"]',
-  '[role="textbox"]',
-];
-
-const SEND_BUTTON_SELECTORS = [
-  'button.submit-button[aria-label="Enviar"]',
-  'button.submit-button',
-  'button[aria-label="Enviar"]',
-  'button[aria-label*="send"]',
-  'button[type="submit"]',
-];
-
-const RESPONSE_CARD_SELECTORS = [
-  'note-card',
-  '.note-card',
-  'mat-card',
-  'article',
-  '[role="article"]',
-  '[data-testid*="response"]',
-  '[data-testid*="answer"]',
-  '[data-testid*="note"]',
-  '.message',
-  '.answer',
-  '.assistant-message',
-  '.response',
-];
-
 function queryAllDeep(selector, root = document) {
   const results = [];
   const seen = new Set();
@@ -59,6 +25,14 @@ function queryAllDeep(selector, root = document) {
   }
 
   return results;
+}
+
+function getNormalizedControlText(element) {
+  return normalizeSignatureText([
+    element?.getAttribute?.('aria-label'),
+    element?.getAttribute?.('placeholder'),
+    element?.textContent,
+  ].filter(Boolean).join(' '));
 }
 
 function isVisible(element) {
@@ -97,12 +71,111 @@ function labelMatches(element, patterns) {
   return patterns.some(pattern => pattern.test(label));
 }
 
-function isWritableControl(element) {
-  if (!element) return false;
-  if (element.matches?.('[disabled], [readonly]')) return false;
-  if (element.getAttribute?.('formcontrolname') === 'discoverSourcesQuery') return false;
-  if (element.closest?.('[formcontrolname="discoverSourcesQuery"]')) return false;
-  return true;
+function getComposeScore(element) {
+  if (!element || !isVisible(element) || isInsideShadowPanel(element)) return -1;
+  if (element.matches?.('[disabled], [readonly]')) return -1;
+  if (element.closest?.('[formcontrolname="discoverSourcesQuery"]')) return -1;
+
+  const labelText = getNormalizedControlText(element);
+  if (/discover\s*sources?/.test(labelText)) return -1;
+  if (/pesquise\s+fontes/.test(labelText)) return -1;
+  if (/search\s*sources?/.test(labelText)) return -1;
+  if (/source\s*query/.test(labelText)) return -1;
+
+  let score = -1;
+
+  if (element.matches?.('textarea.query-box-input[aria-label="Query box"]')) score = 120;
+  else if (element.matches?.('textarea.query-box-input[aria-label="Caixa de consulta"]')) score = 120;
+  else if (element.matches?.('textarea.query-box-input')) score = 100;
+  else if (/^query box$/.test(labelText)) score = 95;
+  else if (/^caixa de consulta$/.test(labelText)) score = 95;
+  else if (element.matches?.('textarea[aria-label="Query box"]')) score = 90;
+  else if (element.matches?.('textarea[aria-label="Caixa de consulta"]')) score = 90;
+  else if (element.matches?.('textarea[placeholder="Start typing..."]')) score = 90;
+  else if (element.matches?.('textarea[placeholder*="Start typing"]')) score = 80;
+  else if (element.matches?.('textarea[placeholder*="Comece a digitar"]')) score = 80;
+  else if (element.matches?.('textarea[placeholder*="digitar"]')) score = 70;
+  else if (element.matches?.('[contenteditable="true"]')) score = 45;
+  else if (element.matches?.('[role="textbox"]')) score = 35;
+  else if (element.matches?.('textarea')) score = 20;
+
+  if (score < 0) return -1;
+
+  if (element.closest?.('form')) score += 25;
+  if (element.closest?.('.message-container')) score += 15;
+  if (element.closest?.('.input-group')) score += 10;
+  if (element.closest?.('query-box')) score += 10;
+  if (element.closest?.('.bottom-container')) score += 5;
+
+  return score;
+}
+
+function getSubmitButtonScore(button, composerTextarea = null) {
+  if (!button || !isVisible(button) || isInsideShadowPanel(button)) return -1;
+
+  const labelText = getNormalizedControlText(button);
+  let score = -1;
+
+  if (button.matches?.('button.submit-button[aria-label="Submit"]')) score = 120;
+  else if (button.matches?.('button.submit-button[aria-label="Enviar"]')) score = 120;
+  else if (button.matches?.('button.submit-button')) score = 100;
+  else if (button.matches?.('button[type="submit"]')) score = 90;
+  else if (/^(submit|enviar)$/.test(labelText)) score = 80;
+  else if (labelText.includes('submit') || labelText.includes('enviar') || labelText.includes('arrow_forward')) score = 60;
+  else if (button.matches?.('button')) score = 20;
+
+  if (score < 0) return -1;
+
+  if (score === 20 && !button.closest?.('form') && !button.closest?.('.bottom-right-container') && !button.closest?.('.message-container') && !button.closest?.('.input-group')) {
+    return -1;
+  }
+
+  if (button.closest?.('form')) score += 25;
+  if (button.closest?.('.bottom-right-container')) score += 15;
+  if (button.closest?.('.message-container')) score += 10;
+  if (button.closest?.('.input-group')) score += 10;
+
+  if (composerTextarea && button.closest?.('form') === composerTextarea.closest?.('form')) {
+    score += 20;
+  }
+
+  return score;
+}
+
+function getBestSubmitButton(root, composerTextarea = null) {
+  const buttons = queryAllDeep('button, [role="button"]', root || document);
+  const candidates = [];
+
+  for (const element of buttons) {
+    const score = getSubmitButtonScore(element, composerTextarea);
+    if (score < 0) continue;
+    candidates.push({ element, score });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.element || null;
+}
+
+export function getComposeContext() {
+  const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
+  const candidates = [];
+
+  for (const element of editors) {
+    const score = getComposeScore(element);
+    if (score < 0) continue;
+
+    const form = element.closest?.('form') || null;
+    const button = getBestSubmitButton(form || document, element) || getBestSubmitButton(document, element);
+    candidates.push({
+      element,
+      form,
+      button,
+      score: score + (button ? 15 : 0),
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0] || null;
 }
 
 function isEnabledButton(element) {
@@ -113,77 +186,12 @@ function isEnabledButton(element) {
   return true;
 }
 
-function firstVisibleMatch(list, predicates) {
-  for (const element of list) {
-    if (!isVisible(element)) continue;
-    if (isInsideShadowPanel(element)) continue;
-    if (predicates.some(predicate => predicate(element))) return element;
-  }
-  return null;
-}
-
 export function getComposeTextarea() {
-  const editors = queryAllDeep('textarea, [contenteditable="true"], [role="textbox"]');
-  const candidates = [];
-
-  for (const element of editors) {
-    if (!isVisible(element)) continue;
-    if (isInsideShadowPanel(element)) continue;
-    if (!isWritableControl(element)) continue;
-
-    let score = -1;
-
-    if (element.matches?.('textarea.query-box-input[aria-label="Caixa de consulta"]')) score = 100;
-    else if (element.matches?.('textarea.query-box-input')) score = 90;
-    else if (element.matches?.('textarea[aria-label="Caixa de consulta"]')) score = 80;
-    else if (element.matches?.('textarea[placeholder="Comece a digitar…"]')) score = 70;
-    else if (element.matches?.('textarea[placeholder*="Comece a digitar"]')) score = 60;
-    else if (element.matches?.('textarea[placeholder*="digitar"]')) score = 50;
-    else if (element.matches?.('[contenteditable="true"]')) score = 40;
-    else if (element.matches?.('[role="textbox"]')) score = 30;
-
-    if (score >= 0) {
-      candidates.push({ element, score });
-    }
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates[0]?.element || null;
+  return getComposeContext()?.element || null;
 }
 
 export function getSendButton() {
-  const composeForm = getComposeTextarea()?.closest?.('form') || null;
-  const buttons = queryAllDeep('button, [role="button"]', composeForm || document);
-  const candidates = [];
-
-  for (const element of buttons) {
-    if (!isVisible(element)) continue;
-    if (isInsideShadowPanel(element)) continue;
-
-    let score = -1;
-
-    if (SEND_BUTTON_SELECTORS.some(selector => {
-      try {
-        return element.matches(selector);
-      } catch {
-        return false;
-      }
-    })) {
-      score = 100;
-    } else if (labelMatches(element, [/enviar/, /send/])) {
-      score = 60;
-    }
-
-    if (score < 0) continue;
-
-    if (element.closest?.('form')) score += 20;
-    if (element.closest?.('.message-container')) score += 10;
-
-    candidates.push({ element, score });
-  }
-
-  candidates.sort((a, b) => b.score - a.score);
-  return candidates[0]?.element || null;
+  return getComposeContext()?.button || null;
 }
 
 export function setTextareaValue(textarea, value) {
@@ -193,7 +201,10 @@ export function setTextareaValue(textarea, value) {
   const isContentEditable = textarea?.isContentEditable || textarea?.getAttribute?.('contenteditable') === 'true';
 
   if (isTextInput) {
-    const nativeSetter = Object.getOwnPropertyDescriptor(isTextInput && textarea instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, 'value')?.set;
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      textarea instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
 
     if (nativeSetter) {
       nativeSetter.call(textarea, text);
@@ -208,6 +219,14 @@ export function setTextareaValue(textarea, value) {
   } else {
     textarea.textContent = text;
   }
+
+  textarea.dispatchEvent(new InputEvent('beforeinput', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    data: text,
+    inputType: 'insertText',
+  }));
 
   textarea.dispatchEvent(new InputEvent('input', {
     bubbles: true,
@@ -274,6 +293,7 @@ export async function activateSubmitButton(button, signal) {
 
   const form = button.closest?.('form') || null;
   const touchTarget = button.querySelector?.('.mat-mdc-button-touch-target');
+  let submitSeen = false;
 
   try {
     button.focus?.({ preventScroll: true });
@@ -281,56 +301,133 @@ export async function activateSubmitButton(button, signal) {
     button.focus?.();
   }
 
-  try {
-    button.click?.();
-  } catch {
-    // Fallbacks abaixo
-  }
+  const onSubmit = () => {
+    submitSeen = true;
+  };
 
-  if (touchTarget && typeof touchTarget.click === 'function') {
+  form?.addEventListener('submit', onSubmit, { capture: true, once: true });
+
+  const attempt = async action => {
+    if (submitSeen || signal?.aborted) return;
+
     try {
-      touchTarget.click();
+      action?.();
     } catch {
       // Fallbacks abaixo
     }
+
+    await delay(75, signal);
+  };
+
+  await attempt(() => {
+    if (touchTarget && typeof touchTarget.click === 'function') {
+      touchTarget.click();
+      return;
+    }
+    button.click?.();
+  });
+
+  await attempt(() => {
+    button.click?.();
+  });
+
+  if (!submitSeen && form?.requestSubmit) {
+    await attempt(() => {
+      try {
+        form.requestSubmit(button);
+      } catch {
+        form.requestSubmit();
+      }
+    });
   }
 
-  if (form?.requestSubmit) {
-    try {
-      form.requestSubmit(button);
-    } catch {
-      try {
-        form.requestSubmit();
-      } catch {
-        // Fallback abaixo
-      }
-    }
-  } else if (form) {
-    try {
+  if (!submitSeen && form) {
+    await attempt(() => {
       form.dispatchEvent(new Event('submit', {
         bubbles: true,
         cancelable: true,
         composed: true,
       }));
-    } catch {
-      // Fallback final abaixo
-    }
+    });
   }
 
-  await delay(75, signal);
   return true;
 }
 
 function cloneWithoutControls(element) {
   const clone = element.cloneNode(true);
-  clone.querySelectorAll('button, [role="button"], input, textarea, script, style, svg, mat-icon, .mat-mdc-button-touch-target, [aria-hidden="true"]').forEach(node => node.remove());
+  clone.querySelectorAll([
+    'button',
+    '[role="button"]',
+    'input',
+    'textarea',
+    'script',
+    'style',
+    'svg',
+    'mat-icon',
+    '.mat-mdc-button-touch-target',
+    '[aria-hidden="true"]',
+    'chat-panel-header',
+    '.chat-panel-empty-state-action-bar',
+    '.suggestions-container',
+  ].join(', ')).forEach(node => node.remove());
   return clone;
+}
+
+function getResponseRootElement(element) {
+  if (!element) return null;
+  if (element.matches?.('.notebook-summary')) return element;
+
+  const directSummary = element.querySelector?.('.notebook-summary');
+  if (directSummary) return directSummary;
+
+  return element;
+}
+
+function getResponseContainerFromButton(button) {
+  const selector = [
+    '.notebook-summary',
+    '.chat-panel-empty-state',
+    '.chat-panel-content',
+    '.chat-panel-response',
+    '.chat-panel-message',
+    'note-card',
+    '.note-card',
+    'mat-card',
+    'article',
+    '[role="article"]',
+    '[data-testid*="response"]',
+    '[data-testid*="answer"]',
+    '[data-testid*="note"]',
+    '.message',
+    '.answer',
+    '.assistant-message',
+    '.response',
+  ].join(', ');
+
+  const card = button.closest?.(selector);
+  if (card) return card;
+
+  let current = button.parentElement;
+  while (current && current !== document.body) {
+    if (current.matches?.('section, article, mat-card, div, note-card, chat-panel-content, chat-panel')) {
+      const summaryNode = current.querySelector?.('.notebook-summary');
+      const text = normalizeDisplayText(summaryNode?.textContent || current.textContent || '');
+      if (text.length >= 20) return current;
+    }
+    current = current.parentElement;
+  }
+
+  return button.parentElement || button;
 }
 
 export function extractResponseText(element) {
   if (!element) return '';
-  const clone = cloneWithoutControls(element);
-  return normalizeDisplayText(clone.innerText || clone.textContent || '');
+  const source = getResponseRootElement(element);
+  const clone = cloneWithoutControls(source);
+  const extracted = normalizeDisplayText(clone.innerText || clone.textContent || '');
+  if (extracted) return extracted;
+  return normalizeDisplayText(source.innerText || source.textContent || '');
 }
 
 function getCandidateSignature(element) {
@@ -338,58 +435,55 @@ function getCandidateSignature(element) {
 }
 
 function getCardContainerFromButton(button) {
-  const selector = RESPONSE_CARD_SELECTORS.join(',');
-  const card = button.closest(selector);
-  if (card) return card;
-
-  let current = button.parentElement;
-  while (current && current !== document.body) {
-    if (current.matches?.('section, article, mat-card, div, note-card')) {
-      const text = extractResponseText(current);
-      if (text.length >= 20) return current;
-    }
-    current = current.parentElement;
-  }
-
-  return null;
+  return getResponseContainerFromButton(button);
 }
 
 function collectResponseCandidates() {
-  const selector = RESPONSE_CARD_SELECTORS.join(',');
   const candidates = [];
   const seen = new Set();
 
-  const copyButtons = queryAllDeep('button, [role="button"]').filter(button => {
+  const addCandidate = element => {
+    if (!element || seen.has(element) || !isVisible(element) || isInsideShadowPanel(element)) return;
+    const text = extractResponseText(element);
+    if (text.length < 20) return;
+    candidates.push(element);
+    seen.add(element);
+  };
+
+  queryAllDeep('.notebook-summary').forEach(addCandidate);
+
+  queryAllDeep('button, [role="button"]').filter(button => {
     if (!isVisible(button) || isInsideShadowPanel(button)) return false;
     return labelMatches(button, [/copi/, /copy/]);
-  });
-
-  for (const button of copyButtons) {
+  }).forEach(button => {
     const card = getCardContainerFromButton(button);
-    if (card && !seen.has(card)) {
-      candidates.push(card);
-      seen.add(card);
-    }
-  }
-
-  const genericCards = queryAllDeep(selector).filter(element => {
-    if (!isVisible(element) || isInsideShadowPanel(element)) return false;
-    const text = extractResponseText(element);
-    return text.length >= 20;
+    addCandidate(card);
   });
 
-  for (const card of genericCards) {
-    if (!seen.has(card)) {
-      candidates.push(card);
-      seen.add(card);
-    }
-  }
+  queryAllDeep([
+    '.chat-panel-empty-state',
+    '.chat-panel-content',
+    '.chat-panel-response',
+    '.chat-panel-message',
+    'note-card',
+    '.note-card',
+    'mat-card',
+    'article',
+    '[role="article"]',
+    '[data-testid*="response"]',
+    '[data-testid*="answer"]',
+    '[data-testid*="note"]',
+    '.message',
+    '.answer',
+    '.assistant-message',
+    '.response',
+  ].join(',')).forEach(addCandidate);
 
   return candidates;
 }
 
 export function snapshotResponseSignatures() {
-  return collectResponseCandidates().map(candidate => getCandidateSignature(candidate));
+  return [...new Set(collectResponseCandidates().map(candidate => getCandidateSignature(candidate)).filter(Boolean))];
 }
 
 export function findLatestResponseCandidate({ excludeSignatures = new Set() } = {}) {
@@ -403,7 +497,10 @@ export function findLatestResponseCandidate({ excludeSignatures = new Set() } = 
     const signature = getCandidateSignature(candidate);
     if (excludeSignatures.has(signature)) continue;
 
-    const copyButton = [...candidate.querySelectorAll('button')].find(button => labelMatches(button, [/copi/, /copy/]));
+    const copyRoot = candidate.matches?.('.notebook-summary')
+      ? candidate.parentElement || candidate
+      : candidate;
+    const copyButton = [...copyRoot.querySelectorAll('button')].find(button => labelMatches(button, [/copi/, /copy/]));
 
     return {
       element: candidate,
@@ -419,7 +516,10 @@ export function findLatestResponseCandidate({ excludeSignatures = new Set() } = 
 export function clickNativeCopyButton(candidateElement) {
   if (!candidateElement) return false;
 
-  const copyButton = [...candidateElement.querySelectorAll('button')].find(button => {
+  const root = candidateElement.matches?.('.notebook-summary')
+    ? candidateElement.parentElement || candidateElement
+    : candidateElement;
+  const copyButton = [...root.querySelectorAll('button')].find(button => {
     return labelMatches(button, [/copi/, /copy/]);
   });
 

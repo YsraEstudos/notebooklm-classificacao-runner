@@ -1,7 +1,7 @@
 {
   "name": "notebooklm-classificacao-runner",
   "private": true,
-  "version": "1.0.4",
+  "version": "1.0.6",
   "homepage": "https://github.com/YsraEstudos/notebooklm-classificacao-runner",
   "repository": {
     "type": "git",
@@ -11,10 +11,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "jsdom": "^29.0.2",
     "vite": "^5.1.0",
-    "vite-plugin-monkey": "^3.1.2"
+    "vite-plugin-monkey": "^3.1.2",
+    "vitest": "^4.1.5"
   }
 }

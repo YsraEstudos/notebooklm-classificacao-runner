@@ -17,3 +17,8 @@ Release checklist:
 3. Commit the generated `dist/` files.
 4. Push to GitHub.
 5. Verify the raw `meta.js` and `user.js` URLs return `200`.
+
+Live NotebookLM contract:
+
+- Use the accessible notebook `https://notebooklm.google.com/notebook/03d58f37-56b7-4576-9e34-b6010fc553e9` as the selector reference whenever changing composer, submit, or response-capture logic.
+- Do not trust `notebooklm_dom_structure.md` alone for chat-panel behavior; confirm the live DOM with Playwright before publishing selector-sensitive changes.

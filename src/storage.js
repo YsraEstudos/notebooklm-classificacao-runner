@@ -70,9 +70,22 @@ export function loadState() {
     state.queue = Array.isArray(state.queue) ? state.queue : [];
     state.history = Array.isArray(state.history) ? state.history : [];
     state.nextIndex = Number.isFinite(state.nextIndex) ? state.nextIndex : 0;
+    state.collapsed = Boolean(state.collapsed);
+    state.launcherTop = Number.isFinite(state.launcherTop) ? state.launcherTop : 120;
     state.status = ['idle', 'running', 'paused', 'stopped', 'done', 'error'].includes(state.status)
       ? state.status
       : 'idle';
+
+    if (state.currentBatch && typeof state.currentBatch === 'object') {
+      state.currentBatch = {
+        ...state.currentBatch,
+        baselineSignatures: Array.isArray(state.currentBatch.baselineSignatures)
+          ? state.currentBatch.baselineSignatures.map(signature => String(signature))
+          : [],
+      };
+    } else {
+      state.currentBatch = null;
+    }
 
     if (state.status === 'running') {
       state.status = 'paused';
@@ -187,5 +200,6 @@ export function createExampleJson() {
     { text: 'Quarto item de exemplo para mostrar continuidade.' },
     { text: 'Quinto item de exemplo.' },
     { text: 'Sexto item de exemplo.' },
+    { text: 'Sétimo item de exemplo para fechar o lote final.' },
   ], null, 2);
 }

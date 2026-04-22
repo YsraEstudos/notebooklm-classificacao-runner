@@ -21,6 +21,7 @@ import {
 
 const BATCH_SIZE = 3;
 const WAIT_MS = 90_000;
+const CAPTURE_TIMEOUT_MS = 45_000;
 
 function formatError(error) {
   if (!error) return 'Erro desconhecido.';
@@ -223,13 +224,13 @@ export class ClassificacaoRunner {
       running: false,
       paused: false,
       nextIndex: 0,
-      history: [],
+      history: Array.isArray(this.state.history) ? [...this.state.history] : [],
       currentBatch: null,
       lastCapturedSignature: '',
       lastError: '',
       lastInfo: hasQueue
-        ? 'Progresso apagado. Clique em Start para recomeçar do item 1.'
-        : 'Progresso apagado. Carregue um JSON para começar.',
+        ? 'Progresso zerado. A fila voltou ao item 1 sem apagar o histórico.'
+        : 'Progresso zerado. Carregue um JSON para começar.',
       runId: `run_${Date.now()}`,
     });
   }
@@ -283,6 +284,7 @@ export class ClassificacaoRunner {
         const batchNumber = Math.floor(cursor / BATCH_SIZE) + 1;
         const promptText = buildBatchText(batch);
         const batchId = `batch_${Date.now()}_${cursor}`;
+        const baselineSignatures = snapshotResponseSignatures();
         const initialBatchState = {
           id: batchId,
           batchNumber,
@@ -291,6 +293,7 @@ export class ClassificacaoRunner {
           itemCount: batch.length,
           items: batch.map(item => item.text),
           promptText,
+          baselineSignatures,
           phase: 'sending',
           sentAt: null,
           waitDeadlineAt: null,
@@ -335,7 +338,7 @@ export class ClassificacaoRunner {
           },
         });
 
-        const candidate = await this.captureLatestResponse(signal);
+        const candidate = await this.captureLatestResponse(signal, baselineSignatures);
         if (!candidate) {
           throw new Error('Não encontrei uma resposta nova para o lote atual.');
         }
@@ -399,6 +402,7 @@ export class ClassificacaoRunner {
   async finishCurrentBatch(signal) {
     const current = this.state.currentBatch;
     if (!current) return;
+    const baselineSignatures = Array.isArray(current.baselineSignatures) ? current.baselineSignatures : [];
 
     if (current.phase === 'waiting' && current.waitDeadlineAt) {
       await waitForBatchDeadline(current.waitDeadlineAt, signal, remaining => {
@@ -411,7 +415,7 @@ export class ClassificacaoRunner {
       });
     }
 
-    const candidate = await this.captureLatestResponse(signal);
+    const candidate = await this.captureLatestResponse(signal, baselineSignatures);
     if (!candidate) {
       throw new Error('Não encontrei uma resposta nova para o lote retomado.');
     }
@@ -444,20 +448,23 @@ export class ClassificacaoRunner {
     clickNativeCopyButton(candidate.element);
   }
 
-  async captureLatestResponse(signal) {
-    const excludedSignature = this.state.lastCapturedSignature;
-    const deadline = Date.now() + 15_000;
+  async captureLatestResponse(signal, baselineSignatures = []) {
+    const excluded = new Set([
+      this.state.lastCapturedSignature,
+      ...baselineSignatures,
+    ].filter(Boolean).map(value => String(value)));
+    const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
 
     while (!signal.aborted && Date.now() < deadline) {
       const candidate = findLatestResponseCandidate({
-        excludeSignatures: excludedSignature ? new Set([excludedSignature]) : new Set(),
+        excludeSignatures: excluded,
       });
 
       if (candidate) {
         const normalizedText = normalizeDisplayText(candidate.text);
         const signature = candidate.signature;
 
-        if (signature && signature !== excludedSignature && normalizedText.length >= 20) {
+        if (signature && !excluded.has(signature) && normalizedText.length >= 20) {
           return candidate;
         }
       }

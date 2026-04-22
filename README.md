@@ -25,3 +25,14 @@ npm run build
 ```
 
 Ou execute `build_and_copy.bat` para compilar e copiar o userscript final.
+
+## Testes
+
+```bash
+npm test
+```
+
+Os testes cobrem a descoberta do composer, o envio em lote, a captura de respostas e o launcher recolhido.
+
+Quando alterar seletores do NotebookLM, valide também o notebook de exemplo vivo:
+https://notebooklm.google.com/notebook/03d58f37-56b7-4576-9e34-b6010fc553e9
