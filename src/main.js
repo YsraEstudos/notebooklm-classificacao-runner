@@ -25,11 +25,10 @@ function ensureApp() {
     return;
   }
 
-  if (document.getElementById(APP_HOST_ID)) {
-    if (panel && app) return;
+  if (panel && app) {
+    panel.mount();
+    return;
   }
-
-  if (panel && app) return;
 
   app = new ClassificacaoRunner({
     onChange: state => panel?.render(state),

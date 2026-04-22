@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.1
+// @version      1.0.2
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -936,6 +936,15 @@ ${entry.responseText}`;
   function formatRange(startIndex, endIndex) {
     return `${startIndex + 1}-${endIndex + 1}`;
   }
+  function setChipContent(container, primaryText, secondaryText = "") {
+    container.replaceChildren();
+    const strong = createElement("strong");
+    strong.textContent = primaryText;
+    container.appendChild(strong);
+    if (secondaryText) {
+      container.appendChild(document.createTextNode(secondaryText));
+    }
+  }
   class ClassificacaoPanel {
     constructor({
       onDraftChange,
@@ -1455,7 +1464,6 @@ ${entry.responseText}`;
     buildEditor() {
       const wrap = createElement("div", "nlm-editor-wrap");
       const titleRow = createElement("div", "nlm-section-title");
-      titleRow.innerHTML = "";
       const left = createElement("span");
       left.textContent = "Entrada JSON";
       const right = createElement("span", "nlm-muted");
@@ -1480,9 +1488,9 @@ ${entry.responseText}`;
       this.statusChip.dataset.tone = "idle";
       this.statusChip.textContent = "IDLE";
       this.progressChip = createElement("div", "nlm-mini");
-      this.progressChip.innerHTML = "<strong>0</strong> itens carregados";
+      setChipContent(this.progressChip, "0", " itens carregados");
       this.currentChip = createElement("div", "nlm-mini");
-      this.currentChip.innerHTML = "<strong>Pronto</strong> para iniciar";
+      setChipContent(this.currentChip, "Pronto", " para iniciar");
       this.progressBar = createElement("div", "nlm-progress");
       this.progressBarFill = createElement("div", "nlm-progress-bar");
       this.progressBar.appendChild(this.progressBarFill);
@@ -1617,7 +1625,7 @@ ${entry.responseText}`;
       this.statusChip.textContent = statusTone.toUpperCase();
       const loadedCount = Array.isArray(state.queue) ? state.queue.length : 0;
       const historyCount = Array.isArray(state.history) ? state.history.length : 0;
-      this.progressChip.innerHTML = `<strong>${loadedCount}</strong> itens carregados`;
+      setChipContent(this.progressChip, String(loadedCount), " itens carregados");
       this.historyCount.textContent = `${historyCount} resposta${historyCount === 1 ? "" : "s"}`;
       const current = state.currentBatch;
       if (current) {
@@ -1626,20 +1634,20 @@ ${entry.responseText}`;
           waiting: `Aguardando ${formatDuration(current.remainingMs ?? 0)}`,
           capturing: `Capturando lote ${current.batchNumber}`
         }[current.phase] || `Lote ${current.batchNumber}`;
-        this.currentChip.innerHTML = `<strong>${statusLabel}</strong> · itens ${formatRange(current.startIndex, current.endIndex)}`;
+        setChipContent(this.currentChip, statusLabel, ` · itens ${formatRange(current.startIndex, current.endIndex)}`);
         const progress = loadedCount > 0 ? Math.min(100, (current.endIndex + 1) / loadedCount * 100) : 0;
         this.progressBarFill.style.width = `${progress}%`;
       } else if (state.status === "done") {
-        this.currentChip.innerHTML = "<strong>Concluído</strong> · pronto para novo JSON";
+        setChipContent(this.currentChip, "Concluído", " · pronto para novo JSON");
         this.progressBarFill.style.width = "100%";
       } else if (state.status === "paused") {
-        this.currentChip.innerHTML = "<strong>Pausado</strong> · pode retomar do mesmo ponto";
+        setChipContent(this.currentChip, "Pausado", " · pode retomar do mesmo ponto");
         const progress = loadedCount > 0 ? Math.min(state.nextIndex, loadedCount) / loadedCount * 100 : 0;
         this.progressBarFill.style.width = `${progress}%`;
       } else if (state.status === "error") {
-        this.currentChip.innerHTML = `<strong>Erro</strong> · revise a DOM ou o JSON`;
+        setChipContent(this.currentChip, "Erro", " · revise a DOM ou o JSON");
       } else {
-        this.currentChip.innerHTML = "<strong>Pronto</strong> para iniciar";
+        setChipContent(this.currentChip, "Pronto", " para iniciar");
         const progress = loadedCount > 0 ? Math.min(state.nextIndex, loadedCount) / loadedCount * 100 : 0;
         this.progressBarFill.style.width = `${progress}%`;
       }
@@ -1700,7 +1708,6 @@ ${entry.responseText}`;
       downloadText("notebooklm-classificacao-example.json", createExampleJson(), "application/json;charset=utf-8");
     }
   }
-  const APP_HOST_ID = "nlm-classificacao-host";
   let app = null;
   let panel = null;
   let lastPath = window.location.pathname;
@@ -1719,10 +1726,10 @@ ${entry.responseText}`;
       teardown();
       return;
     }
-    if (document.getElementById(APP_HOST_ID)) {
-      if (panel && app) return;
+    if (panel && app) {
+      panel.mount();
+      return;
     }
-    if (panel && app) return;
     app = new ClassificacaoRunner({
       onChange: (state) => panel == null ? void 0 : panel.render(state),
       onLog: (message, tone = "info") => panel == null ? void 0 : panel.setNotice(message, tone)

@@ -22,6 +22,18 @@ function formatRange(startIndex, endIndex) {
   return `${startIndex + 1}-${endIndex + 1}`;
 }
 
+function setChipContent(container, primaryText, secondaryText = '') {
+  container.replaceChildren();
+
+  const strong = createElement('strong');
+  strong.textContent = primaryText;
+  container.appendChild(strong);
+
+  if (secondaryText) {
+    container.appendChild(document.createTextNode(secondaryText));
+  }
+}
+
 export class ClassificacaoPanel {
   constructor({
     onDraftChange,
@@ -558,7 +570,6 @@ export class ClassificacaoPanel {
   buildEditor() {
     const wrap = createElement('div', 'nlm-editor-wrap');
     const titleRow = createElement('div', 'nlm-section-title');
-    titleRow.innerHTML = '';
     const left = createElement('span');
     left.textContent = 'Entrada JSON';
     const right = createElement('span', 'nlm-muted');
@@ -588,10 +599,10 @@ export class ClassificacaoPanel {
     this.statusChip.textContent = 'IDLE';
 
     this.progressChip = createElement('div', 'nlm-mini');
-    this.progressChip.innerHTML = '<strong>0</strong> itens carregados';
+    setChipContent(this.progressChip, '0', ' itens carregados');
 
     this.currentChip = createElement('div', 'nlm-mini');
-    this.currentChip.innerHTML = '<strong>Pronto</strong> para iniciar';
+    setChipContent(this.currentChip, 'Pronto', ' para iniciar');
 
     this.progressBar = createElement('div', 'nlm-progress');
     this.progressBarFill = createElement('div', 'nlm-progress-bar');
@@ -717,7 +728,7 @@ export class ClassificacaoPanel {
 
     const loadedCount = Array.isArray(state.queue) ? state.queue.length : 0;
     const historyCount = Array.isArray(state.history) ? state.history.length : 0;
-    this.progressChip.innerHTML = `<strong>${loadedCount}</strong> itens carregados`;
+    setChipContent(this.progressChip, String(loadedCount), ' itens carregados');
     this.historyCount.textContent = `${historyCount} resposta${historyCount === 1 ? '' : 's'}`;
 
     const current = state.currentBatch;
@@ -727,20 +738,20 @@ export class ClassificacaoPanel {
         waiting: `Aguardando ${formatDuration(current.remainingMs ?? 0)}`,
         capturing: `Capturando lote ${current.batchNumber}`,
       }[current.phase] || `Lote ${current.batchNumber}`;
-      this.currentChip.innerHTML = `<strong>${statusLabel}</strong> · itens ${formatRange(current.startIndex, current.endIndex)}`;
+      setChipContent(this.currentChip, statusLabel, ` · itens ${formatRange(current.startIndex, current.endIndex)}`);
       const progress = loadedCount > 0 ? Math.min(100, ((current.endIndex + 1) / loadedCount) * 100) : 0;
       this.progressBarFill.style.width = `${progress}%`;
     } else if (state.status === 'done') {
-      this.currentChip.innerHTML = '<strong>Concluído</strong> · pronto para novo JSON';
+      setChipContent(this.currentChip, 'Concluído', ' · pronto para novo JSON');
       this.progressBarFill.style.width = '100%';
     } else if (state.status === 'paused') {
-      this.currentChip.innerHTML = '<strong>Pausado</strong> · pode retomar do mesmo ponto';
+      setChipContent(this.currentChip, 'Pausado', ' · pode retomar do mesmo ponto');
       const progress = loadedCount > 0 ? (Math.min(state.nextIndex, loadedCount) / loadedCount) * 100 : 0;
       this.progressBarFill.style.width = `${progress}%`;
     } else if (state.status === 'error') {
-      this.currentChip.innerHTML = `<strong>Erro</strong> · revise a DOM ou o JSON`;
+      setChipContent(this.currentChip, 'Erro', ' · revise a DOM ou o JSON');
     } else {
-      this.currentChip.innerHTML = '<strong>Pronto</strong> para iniciar';
+      setChipContent(this.currentChip, 'Pronto', ' para iniciar');
       const progress = loadedCount > 0 ? (Math.min(state.nextIndex, loadedCount) / loadedCount) * 100 : 0;
       this.progressBarFill.style.width = `${progress}%`;
     }
