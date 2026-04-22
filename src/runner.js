@@ -1,7 +1,6 @@
 import {
   buildBatchText,
   buildHistoryClipboardText,
-  createDefaultState,
   loadState,
   parseQueueFromJson,
   saveState,
@@ -11,7 +10,6 @@ import {
   createAbortError,
   delay,
   normalizeDisplayText,
-  waitFor,
 } from './utils';
 import {
   clickNativeCopyButton,
@@ -79,6 +77,12 @@ export class ClassificacaoRunner {
 
   setCollapsed(collapsed) {
     this.persist({ collapsed: Boolean(collapsed) });
+  }
+
+  setLauncherTop(launcherTop) {
+    const top = Number(launcherTop);
+    if (!Number.isFinite(top)) return;
+    this.persist({ launcherTop: top });
   }
 
   updateDraftText(text) {
@@ -206,6 +210,28 @@ export class ClassificacaoRunner {
     } catch {
       // Aborto esperado
     }
+  }
+
+  async resetProgress() {
+    if (this.state.status === 'running' || this.state.status === 'paused' || this.activePromise) {
+      await this.stop();
+    }
+
+    const hasQueue = Array.isArray(this.state.queue) && this.state.queue.length > 0;
+    this.persist({
+      status: 'idle',
+      running: false,
+      paused: false,
+      nextIndex: 0,
+      history: [],
+      currentBatch: null,
+      lastCapturedSignature: '',
+      lastError: '',
+      lastInfo: hasQueue
+        ? 'Progresso apagado. Clique em Start para recomeçar do item 1.'
+        : 'Progresso apagado. Carregue um JSON para começar.',
+      runId: `run_${Date.now()}`,
+    });
   }
 
   async togglePause() {
@@ -350,7 +376,7 @@ export class ClassificacaoRunner {
         });
       }
     } catch (error) {
-      if (signal.aborted && (this.state.status === 'paused' || this.state.status === 'stopped')) {
+      if (signal.aborted && (this.state.status === 'paused' || this.state.status === 'stopped' || this.state.status === 'idle')) {
         return;
       }
 

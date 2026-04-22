@@ -66,6 +66,13 @@ function ensureApp() {
         panel.setNotice(error?.message || String(error), 'error');
       }
     },
+    onReset: async () => {
+      try {
+        await app.resetProgress();
+      } catch (error) {
+        panel.setNotice(error?.message || String(error), 'error');
+      }
+    },
     onCopyAll: async () => {
       try {
         await app.copyAll();
@@ -84,6 +91,9 @@ function ensureApp() {
     },
     onToggleCollapsed: collapsed => {
       app.setCollapsed(collapsed);
+    },
+    onLauncherTopChange: top => {
+      app.setLauncherTop(top);
     },
     onImportFile: async file => {
       try {

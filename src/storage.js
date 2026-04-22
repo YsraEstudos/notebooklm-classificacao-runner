@@ -38,9 +38,10 @@ function writeRawStorage(value) {
 
 export function createDefaultState() {
   return {
-    version: 1,
+    version: 2,
     status: 'idle',
     collapsed: false,
+    launcherTop: 120,
     draftText: '',
     loadedText: '',
     queue: [],

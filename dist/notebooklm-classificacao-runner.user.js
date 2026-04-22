@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.3
+// @version      1.0.4
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -168,9 +168,10 @@
   }
   function createDefaultState() {
     return {
-      version: 1,
+      version: 2,
       status: "idle",
       collapsed: false,
+      launcherTop: 120,
       draftText: "",
       loadedText: "",
       queue: [],
@@ -284,6 +285,8 @@ ${entry.responseText}`;
     ], null, 2);
   }
   const SEND_BUTTON_SELECTORS = [
+    'button.submit-button[aria-label="Enviar"]',
+    "button.submit-button",
     'button[aria-label="Enviar"]',
     'button[aria-label*="send"]',
     'button[type="submit"]'
@@ -358,13 +361,13 @@ ${entry.responseText}`;
     if ((_c = element.closest) == null ? void 0 : _c.call(element, '[formcontrolname="discoverSourcesQuery"]')) return false;
     return true;
   }
-  function firstVisibleMatch(list, predicates) {
-    for (const element of list) {
-      if (!isVisible(element)) continue;
-      if (isInsideShadowPanel(element)) continue;
-      if (predicates.some((predicate) => predicate(element))) return element;
-    }
-    return null;
+  function isEnabledButton(element) {
+    var _a, _b;
+    if (!element) return false;
+    if (element.disabled) return false;
+    if ((_a = element.matches) == null ? void 0 : _a.call(element, '[disabled], [aria-disabled="true"], .mat-mdc-button-disabled')) return false;
+    if (((_b = element.getAttribute) == null ? void 0 : _b.call(element, "aria-disabled")) === "true") return false;
+    return true;
   }
   function getComposeTextarea() {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
@@ -391,16 +394,32 @@ ${entry.responseText}`;
     return ((_i = candidates[0]) == null ? void 0 : _i.element) || null;
   }
   function getSendButton() {
-    const buttons = queryAllDeep('button, [role="button"]');
-    return firstVisibleMatch(buttons, [
-      (element) => SEND_BUTTON_SELECTORS.some((selector) => {
+    var _a, _b, _c, _d, _e;
+    const composeForm = ((_b = (_a = getComposeTextarea()) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "form")) || null;
+    const buttons = queryAllDeep('button, [role="button"]', composeForm || document);
+    const candidates = [];
+    for (const element of buttons) {
+      if (!isVisible(element)) continue;
+      if (isInsideShadowPanel(element)) continue;
+      let score = -1;
+      if (SEND_BUTTON_SELECTORS.some((selector) => {
         try {
           return element.matches(selector);
         } catch {
           return false;
         }
-      }) || labelMatches(element, [/enviar/, /send/])
-    ]);
+      })) {
+        score = 100;
+      } else if (labelMatches(element, [/enviar/, /send/])) {
+        score = 60;
+      }
+      if (score < 0) continue;
+      if ((_c = element.closest) == null ? void 0 : _c.call(element, "form")) score += 20;
+      if ((_d = element.closest) == null ? void 0 : _d.call(element, ".message-container")) score += 10;
+      candidates.push({ element, score });
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    return ((_e = candidates[0]) == null ? void 0 : _e.element) || null;
   }
   function setTextareaValue(textarea, value) {
     var _a, _b;
@@ -428,6 +447,16 @@ ${entry.responseText}`;
       composed: true,
       data: text,
       inputType: "insertText"
+    }));
+    textarea.dispatchEvent(new Event("input", {
+      bubbles: true,
+      cancelable: true,
+      composed: true
+    }));
+    textarea.dispatchEvent(new Event("keyup", {
+      bubbles: true,
+      cancelable: true,
+      composed: true
     }));
     textarea.dispatchEvent(new Event("change", {
       bubbles: true,
@@ -459,8 +488,50 @@ ${entry.responseText}`;
   async function waitForSendButton(signal) {
     return waitFor(() => {
       const button = getSendButton();
-      return button && !button.disabled ? button : null;
+      return isEnabledButton(button) ? button : null;
     }, { timeoutMs: 1e4, intervalMs: 250, signal });
+  }
+  async function activateSubmitButton(button, signal) {
+    var _a, _b, _c, _d, _e;
+    if (!button) return false;
+    const form = ((_a = button.closest) == null ? void 0 : _a.call(button, "form")) || null;
+    const touchTarget = (_b = button.querySelector) == null ? void 0 : _b.call(button, ".mat-mdc-button-touch-target");
+    try {
+      (_c = button.focus) == null ? void 0 : _c.call(button, { preventScroll: true });
+    } catch {
+      (_d = button.focus) == null ? void 0 : _d.call(button);
+    }
+    try {
+      (_e = button.click) == null ? void 0 : _e.call(button);
+    } catch {
+    }
+    if (touchTarget && typeof touchTarget.click === "function") {
+      try {
+        touchTarget.click();
+      } catch {
+      }
+    }
+    if (form == null ? void 0 : form.requestSubmit) {
+      try {
+        form.requestSubmit(button);
+      } catch {
+        try {
+          form.requestSubmit();
+        } catch {
+        }
+      }
+    } else if (form) {
+      try {
+        form.dispatchEvent(new Event("submit", {
+          bubbles: true,
+          cancelable: true,
+          composed: true
+        }));
+      } catch {
+      }
+    }
+    await delay(75, signal);
+    return true;
   }
   function cloneWithoutControls(element) {
     const clone = element.cloneNode(true);
@@ -550,11 +621,12 @@ ${entry.responseText}`;
       throw new Error("Não encontrei a caixa de consulta do NotebookLM.");
     }
     setTextareaValue(textarea, promptText);
+    await delay(150, signal);
     const sendButton = await waitForSendButton(signal);
     if (!sendButton) {
       throw new Error("Não encontrei o botão de enviar habilitado.");
     }
-    clickTouchTarget(sendButton);
+    await activateSubmitButton(sendButton, signal);
     return true;
   }
   async function waitForBatchDeadline(deadlineAt, signal, onTick) {
@@ -618,6 +690,11 @@ ${entry.responseText}`;
     }
     setCollapsed(collapsed) {
       this.persist({ collapsed: Boolean(collapsed) });
+    }
+    setLauncherTop(launcherTop) {
+      const top = Number(launcherTop);
+      if (!Number.isFinite(top)) return;
+      this.persist({ launcherTop: top });
     }
     updateDraftText(text) {
       this.persist({ draftText: normalizeDisplayText(text) });
@@ -723,6 +800,24 @@ ${entry.responseText}`;
         await this.activePromise;
       } catch {
       }
+    }
+    async resetProgress() {
+      if (this.state.status === "running" || this.state.status === "paused" || this.activePromise) {
+        await this.stop();
+      }
+      const hasQueue = Array.isArray(this.state.queue) && this.state.queue.length > 0;
+      this.persist({
+        status: "idle",
+        running: false,
+        paused: false,
+        nextIndex: 0,
+        history: [],
+        currentBatch: null,
+        lastCapturedSignature: "",
+        lastError: "",
+        lastInfo: hasQueue ? "Progresso apagado. Clique em Start para recomeçar do item 1." : "Progresso apagado. Carregue um JSON para começar.",
+        runId: `run_${Date.now()}`
+      });
     }
     async togglePause() {
       if (this.state.status === "running") {
@@ -845,7 +940,7 @@ ${entry.responseText}`;
           });
         }
       } catch (error) {
-        if (signal.aborted && (this.state.status === "paused" || this.state.status === "stopped")) {
+        if (signal.aborted && (this.state.status === "paused" || this.state.status === "stopped" || this.state.status === "idle")) {
           return;
         }
         const message = formatError(error);
@@ -932,7 +1027,8 @@ ${entry.responseText}`;
     }
   }
   const PANEL_WIDTH = 392;
-  const RAIL_WIDTH = 52;
+  const HANDLE_WIDTH = 72;
+  const DEFAULT_LAUNCHER_TOP = 120;
   function createElement(tag, className, textContent) {
     const element = document.createElement(tag);
     if (className) element.className = className;
@@ -963,9 +1059,11 @@ ${entry.responseText}`;
       onStart,
       onTogglePause,
       onStop,
+      onReset,
       onCopyAll,
       onCopyEntry,
       onToggleCollapsed,
+      onLauncherTopChange,
       onImportFile,
       onDownloadExample
     } = {}) {
@@ -974,14 +1072,20 @@ ${entry.responseText}`;
       this.onStart = onStart;
       this.onTogglePause = onTogglePause;
       this.onStop = onStop;
+      this.onReset = onReset;
       this.onCopyAll = onCopyAll;
       this.onCopyEntry = onCopyEntry;
       this.onToggleCollapsed = onToggleCollapsed;
+      this.onLauncherTopChange = onLauncherTopChange;
       this.onImportFile = onImportFile;
       this.onDownloadExample = onDownloadExample;
       this.state = null;
       this.ignoreEditorEvents = false;
       this.isCollapsed = false;
+      this.launcherTop = DEFAULT_LAUNCHER_TOP;
+      this.launcherDragState = null;
+      this.launcherDragCleanup = null;
+      this.suppressLauncherClick = false;
       this.host = document.createElement("div");
       this.host.id = "nlm-classificacao-host";
       this.host.setAttribute("aria-live", "polite");
@@ -994,6 +1098,18 @@ ${entry.responseText}`;
       this.panel.id = "nlm-classificacao-panel";
       this.rail = createElement("div", "nlm-rail");
       this.rail.id = "nlm-classificacao-rail";
+      this.railButton = createElement("button", "nlm-rail-button");
+      this.railButton.type = "button";
+      this.railButton.title = "Abrir painel e arrastar para mover";
+      this.railButton.setAttribute("aria-label", "Abrir painel do Classificacao");
+      const railBadge = createElement("span", "nlm-rail-badge");
+      railBadge.textContent = "NLM";
+      const railHint = createElement("span", "nlm-rail-hint");
+      railHint.textContent = "↕";
+      this.railButton.append(railBadge, railHint);
+      this.rail.append(this.railButton);
+      this.railButton.tabIndex = -1;
+      this.railButton.setAttribute("aria-hidden", "true");
       this.content = createElement("div", "nlm-content");
       this.header = this.buildHeader();
       this.notice = createElement("div", "nlm-notice");
@@ -1015,6 +1131,7 @@ ${entry.responseText}`;
       this.shell.append(this.panel);
       this.shadow.append(this.shell);
       this.bindEvents();
+      this.applyLauncherTop(this.launcherTop, { persist: false });
     }
     buildStyles() {
       return `
@@ -1029,11 +1146,12 @@ ${entry.responseText}`;
       .nlm-shell {
         position: fixed;
         inset: 0 auto 0 0;
-        width: ${PANEL_WIDTH}px;
+        width: min(${PANEL_WIDTH}px, calc(100vw - 16px));
         z-index: 2147483647;
         pointer-events: none;
         font-family: "Google Sans Text", "Google Sans", "Segoe UI", sans-serif;
         color: #eef2ff;
+        --nlm-launcher-top: ${DEFAULT_LAUNCHER_TOP}px;
       }
 
       .nlm-panel {
@@ -1050,74 +1168,146 @@ ${entry.responseText}`;
         backdrop-filter: blur(16px);
         overflow: hidden;
         transform: translateX(0);
-        transition: transform 240ms ease;
+        transition:
+          transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+          box-shadow 220ms ease,
+          background 220ms ease;
+        will-change: transform, opacity;
       }
 
       .nlm-shell.is-collapsed .nlm-panel {
-        transform: translateX(calc(-100% + ${RAIL_WIDTH}px));
+        background: transparent;
+        border-right-color: transparent;
+        box-shadow: none;
+        transform: translateX(calc(-100% + ${HANDLE_WIDTH}px));
+        pointer-events: none;
       }
 
       .nlm-content {
         position: absolute;
-        inset: 0 ${RAIL_WIDTH}px 0 0;
+        inset: 0;
         display: flex;
         flex-direction: column;
         gap: 10px;
         padding: 16px 14px 14px 14px;
         overflow: hidden;
+        transition: opacity 160ms ease, transform 180ms ease;
+      }
+
+      .nlm-shell.is-collapsed .nlm-content {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-12px);
       }
 
       .nlm-rail {
         position: absolute;
-        inset: 0 0 0 auto;
-        width: ${RAIL_WIDTH}px;
-        border-left: 1px solid rgba(148, 163, 184, 0.14);
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.72));
+        inset: 0 auto 0 0;
+        width: ${HANDLE_WIDTH}px;
         display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 0;
+        align-items: flex-start;
+        justify-content: center;
+        pointer-events: auto;
+        opacity: 1;
+        transition: opacity 160ms ease, transform 180ms ease;
+      }
+
+      .nlm-shell:not(.is-collapsed) .nlm-rail {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateX(-8px);
+      }
+
+      .nlm-shell.is-collapsed .nlm-rail,
+      .nlm-shell.is-collapsed .nlm-rail-button {
+        pointer-events: auto;
       }
 
       .nlm-rail-button {
-        width: 36px;
-        height: 132px;
-        border-radius: 18px;
-        border: 1px solid rgba(148, 163, 184, 0.2);
+        position: absolute;
+        left: 50%;
+        top: var(--nlm-launcher-top);
+        width: 60px;
+        height: 60px;
+        border-radius: 20px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
         background:
-          linear-gradient(180deg, rgba(14, 165, 233, 0.28), rgba(251, 191, 36, 0.18)),
-          rgba(15, 23, 42, 0.92);
+          radial-gradient(circle at 25% 20%, rgba(255, 255, 255, 0.3), transparent 36%),
+          linear-gradient(180deg, rgba(14, 165, 233, 0.96), rgba(37, 99, 235, 0.94) 58%, rgba(15, 23, 42, 0.98));
         color: #fff;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        writing-mode: vertical-rl;
-        text-orientation: mixed;
-        letter-spacing: 0.16em;
-        font-size: 11px;
-        font-weight: 700;
-        cursor: pointer;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.3);
-      }
-
-      .nlm-rail-meta {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 6px;
-        color: rgba(226, 232, 240, 0.78);
-        font-size: 10px;
-        text-transform: uppercase;
+        justify-content: center;
+        gap: 2px;
         letter-spacing: 0.14em;
+        font-size: 10px;
+        font-weight: 800;
+        cursor: grab;
+        box-shadow:
+          0 12px 28px rgba(15, 23, 42, 0.34),
+          0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+        transform: translateX(-50%) translateY(0) scale(1);
+        transition: transform 160ms ease, box-shadow 180ms ease, filter 180ms ease;
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        z-index: 1;
       }
 
-      .nlm-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: #38bdf8;
-        box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.16);
+      .nlm-rail-button::before {
+        content: "";
+        position: absolute;
+        inset: 1px;
+        border-radius: inherit;
+        background:
+          radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.4), transparent 42%),
+          radial-gradient(circle at 70% 82%, rgba(56, 189, 248, 0.18), transparent 46%);
+        opacity: 0.9;
+        pointer-events: none;
+      }
+
+      .nlm-rail-button:hover {
+        filter: brightness(1.04);
+        box-shadow:
+          0 16px 30px rgba(15, 23, 42, 0.42),
+          0 0 0 1px rgba(255, 255, 255, 0.14) inset,
+          0 0 0 8px rgba(56, 189, 248, 0.09);
+      }
+
+      .nlm-rail-button:active {
+        cursor: grabbing;
+        transform: translateX(-50%) translateY(1px) scale(0.98);
+      }
+
+      .nlm-shell.is-collapsed .nlm-rail-button {
+        animation:
+          nlm-button-float 4.8s ease-in-out infinite,
+          nlm-button-pulse 5.4s ease-in-out infinite;
+      }
+
+      .nlm-shell.is-launcher-dragging .nlm-rail-button {
+        animation-play-state: paused;
+        cursor: grabbing;
+      }
+
+      .nlm-rail-badge,
+      .nlm-rail-hint {
+        position: relative;
+        z-index: 1;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .nlm-rail-badge {
+        font-size: 12px;
+        letter-spacing: 0.18em;
+      }
+
+      .nlm-rail-hint {
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        opacity: 0.9;
       }
 
       .nlm-header {
@@ -1200,14 +1390,13 @@ ${entry.responseText}`;
       }
 
       .nlm-controls {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        display: flex;
+        flex-wrap: wrap;
         gap: 8px;
       }
 
-      .nlm-controls-row {
-        display: flex;
-        gap: 8px;
+      .nlm-controls .nlm-btn {
+        flex: 1 1 112px;
       }
 
       .nlm-btn {
@@ -1431,6 +1620,29 @@ ${entry.responseText}`;
       .nlm-spacer {
         flex: 1;
       }
+
+      @keyframes nlm-button-float {
+        0%, 100% {
+          transform: translateX(-50%) translateY(0) scale(1);
+        }
+        50% {
+          transform: translateX(-50%) translateY(-5px) scale(1.01);
+        }
+      }
+
+      @keyframes nlm-button-pulse {
+        0%, 100% {
+          box-shadow:
+            0 12px 28px rgba(15, 23, 42, 0.34),
+            0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+        }
+        50% {
+          box-shadow:
+            0 16px 34px rgba(15, 23, 42, 0.44),
+            0 0 0 1px rgba(255, 255, 255, 0.14) inset,
+            0 0 0 10px rgba(56, 189, 248, 0.06);
+        }
+      }
     `;
     }
     buildHeader() {
@@ -1456,6 +1668,7 @@ ${entry.responseText}`;
       this.startButton = makeButton("Start", "primary");
       this.pauseButton = makeButton("Pause", "warm");
       this.stopButton = makeButton("Stop", "danger");
+      this.resetButton = makeButton("Zerar progresso", "ghost");
       this.copyAllButton = makeButton("Copiar tudo", "secondary");
       this.downloadExampleButton = makeButton("Exemplo", "ghost");
       this.importFileButton = makeButton("Arquivo", "ghost");
@@ -1464,12 +1677,11 @@ ${entry.responseText}`;
         this.startButton,
         this.pauseButton,
         this.stopButton,
+        this.resetButton,
         this.copyAllButton,
-        this.downloadExampleButton
+        this.downloadExampleButton,
+        this.importFileButton
       );
-      const row = createElement("div", "nlm-controls-row");
-      row.append(this.importFileButton);
-      wrap.append(row);
       return wrap;
     }
     buildEditor() {
@@ -1534,9 +1746,16 @@ ${entry.responseText}`;
         var _a;
         (_a = this.onToggleCollapsed) == null ? void 0 : _a.call(this, !this.isCollapsed);
       });
-      this.rail.addEventListener("click", () => {
+      this.railButton.addEventListener("click", (event) => {
         var _a;
-        (_a = this.onToggleCollapsed) == null ? void 0 : _a.call(this, !this.isCollapsed);
+        if (this.suppressLauncherClick) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (this.isCollapsed) {
+          (_a = this.onToggleCollapsed) == null ? void 0 : _a.call(this, false);
+        }
       });
       this.startButton.addEventListener("click", () => {
         var _a;
@@ -1549,6 +1768,10 @@ ${entry.responseText}`;
       this.stopButton.addEventListener("click", () => {
         var _a;
         return (_a = this.onStop) == null ? void 0 : _a.call(this);
+      });
+      this.resetButton.addEventListener("click", () => {
+        var _a;
+        return (_a = this.onReset) == null ? void 0 : _a.call(this);
       });
       this.copyAllButton.addEventListener("click", () => {
         var _a;
@@ -1576,6 +1799,67 @@ ${entry.responseText}`;
         var _a;
         return (_a = this.fileInput) == null ? void 0 : _a.click();
       });
+      this.railButton.addEventListener("pointerdown", (event) => {
+        var _a, _b;
+        if (!this.isCollapsed) return;
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const pointerId = event.pointerId;
+        const startTop = this.launcherTop;
+        const startY = event.clientY;
+        const dragState = {
+          pointerId,
+          startY,
+          startTop,
+          moved: false
+        };
+        this.launcherDragState = dragState;
+        this.shell.classList.add("is-launcher-dragging");
+        const handleMove = (moveEvent) => {
+          if (!this.launcherDragState || moveEvent.pointerId !== pointerId) return;
+          const delta = moveEvent.clientY - startY;
+          if (Math.abs(delta) > 4) {
+            this.launcherDragState.moved = true;
+          }
+          this.applyLauncherTop(startTop + delta, { persist: false });
+        };
+        const cleanup = () => {
+          window.removeEventListener("pointermove", handleMove, true);
+          window.removeEventListener("pointerup", handleUp, true);
+          window.removeEventListener("pointercancel", handleCancel, true);
+          this.shell.classList.remove("is-launcher-dragging");
+          this.launcherDragCleanup = null;
+        };
+        const handleUp = (upEvent) => {
+          var _a2, _b2, _c;
+          if (upEvent.pointerId !== pointerId) return;
+          cleanup();
+          const wasMoved = Boolean((_a2 = this.launcherDragState) == null ? void 0 : _a2.moved);
+          this.launcherDragState = null;
+          if (wasMoved) {
+            this.suppressLauncherClick = true;
+            window.setTimeout(() => {
+              this.suppressLauncherClick = false;
+            }, 0);
+            (_b2 = this.onLauncherTopChange) == null ? void 0 : _b2.call(this, this.launcherTop);
+            return;
+          }
+          (_c = this.onToggleCollapsed) == null ? void 0 : _c.call(this, false);
+        };
+        const handleCancel = (cancelEvent) => {
+          if (cancelEvent.pointerId !== pointerId) return;
+          cleanup();
+          this.launcherDragState = null;
+        };
+        try {
+          (_b = (_a = this.railButton).setPointerCapture) == null ? void 0 : _b.call(_a, pointerId);
+        } catch {
+        }
+        window.addEventListener("pointermove", handleMove, true);
+        window.addEventListener("pointerup", handleUp, true);
+        window.addEventListener("pointercancel", handleCancel, true);
+        this.launcherDragCleanup = cleanup;
+      });
       this.textarea.addEventListener("input", () => {
         var _a;
         if (this.ignoreEditorEvents) return;
@@ -1599,6 +1883,16 @@ ${entry.responseText}`;
         (_b = this.onImportFile) == null ? void 0 : _b.call(this, file);
       });
       this.shadow.appendChild(this.fileInput);
+      this.handleWindowResize = () => {
+        var _a;
+        const clamped = this.clampLauncherTop(this.launcherTop);
+        if (clamped !== this.launcherTop) {
+          (_a = this.onLauncherTopChange) == null ? void 0 : _a.call(this, clamped);
+          return;
+        }
+        this.applyLauncherTop(clamped, { persist: false });
+      };
+      window.addEventListener("resize", this.handleWindowResize, { passive: true });
     }
     mount() {
       if (!document.body) return;
@@ -1607,12 +1901,44 @@ ${entry.responseText}`;
       }
     }
     destroy() {
+      var _a;
+      (_a = this.launcherDragCleanup) == null ? void 0 : _a.call(this);
+      window.removeEventListener("resize", this.handleWindowResize);
       this.host.remove();
     }
     setCollapsed(collapsed) {
       this.isCollapsed = Boolean(collapsed);
       this.shell.classList.toggle("is-collapsed", this.isCollapsed);
       this.collapseButton.textContent = this.isCollapsed ? "Abrir" : "Recolher";
+      this.railButton.tabIndex = this.isCollapsed ? 0 : -1;
+      this.railButton.setAttribute("aria-hidden", this.isCollapsed ? "false" : "true");
+      this.railButton.title = this.isCollapsed ? "Clique para abrir ou arraste para mover" : "Painel aberto";
+    }
+    getLauncherButtonHeight() {
+      var _a;
+      return ((_a = this.railButton) == null ? void 0 : _a.offsetHeight) || 60;
+    }
+    clampLauncherTop(top) {
+      var _a;
+      const parsed = Number(top);
+      const viewportHeight = Math.max(window.innerHeight || ((_a = document.documentElement) == null ? void 0 : _a.clientHeight) || 0, 0);
+      const buttonHeight = this.getLauncherButtonHeight();
+      const minTop = 12;
+      const maxTop = Math.max(minTop, viewportHeight - buttonHeight - 12);
+      if (!Number.isFinite(parsed)) {
+        return this.launcherTop || DEFAULT_LAUNCHER_TOP;
+      }
+      return Math.min(maxTop, Math.max(minTop, Math.round(parsed)));
+    }
+    applyLauncherTop(top, { persist = true } = {}) {
+      var _a;
+      const safeTop = this.clampLauncherTop(top);
+      this.launcherTop = safeTop;
+      this.shell.style.setProperty("--nlm-launcher-top", `${safeTop}px`);
+      if (persist) {
+        (_a = this.onLauncherTopChange) == null ? void 0 : _a.call(this, safeTop);
+      }
+      return safeTop;
     }
     setNotice(text, tone = "info") {
       const normalized = String(text ?? "").trim();
@@ -1631,6 +1957,7 @@ ${entry.responseText}`;
     render(state) {
       this.state = state;
       this.setCollapsed(state.collapsed);
+      this.applyLauncherTop(Number.isFinite(state.launcherTop) ? state.launcherTop : this.launcherTop, { persist: false });
       const statusTone = state.status || "idle";
       this.statusChip.dataset.tone = statusTone;
       this.statusChip.textContent = statusTone.toUpperCase();
@@ -1667,6 +1994,7 @@ ${entry.responseText}`;
       this.pauseButton.disabled = !(state.status === "running" || state.status === "paused" || state.status === "stopped");
       this.startButton.disabled = state.status === "running";
       this.stopButton.disabled = !(state.status === "running" || state.status === "paused" || state.status === "stopped");
+      this.resetButton.disabled = !loadedCount && historyCount === 0 && !current;
       this.copyAllButton.disabled = historyCount === 0;
       if (state.lastError) {
         this.setNotice(state.lastError, "error");
@@ -1679,6 +2007,7 @@ ${entry.responseText}`;
         this.setEditorValue(state.draftText || "");
       }
       this.renderHistory(state.history || []);
+      this.footerText.textContent = state.collapsed ? "Botão flutuante recolhido. Arraste para mudar de posição." : "Esc pausa e recolhe o painel.";
       this.footerInfo.textContent = state.status === "running" && (current == null ? void 0 : current.phase) === "waiting" ? `Aguardando: ${formatDuration(current.remainingMs ?? 0)}` : `90s por lote · ${formatDateTime(state.updatedAt) || "sem data"}`;
     }
     renderHistory(history) {
@@ -1776,6 +2105,13 @@ ${entry.responseText}`;
           panel.setNotice((error == null ? void 0 : error.message) || String(error), "error");
         }
       },
+      onReset: async () => {
+        try {
+          await app.resetProgress();
+        } catch (error) {
+          panel.setNotice((error == null ? void 0 : error.message) || String(error), "error");
+        }
+      },
       onCopyAll: async () => {
         try {
           await app.copyAll();
@@ -1794,6 +2130,9 @@ ${entry.responseText}`;
       },
       onToggleCollapsed: (collapsed) => {
         app.setCollapsed(collapsed);
+      },
+      onLauncherTopChange: (top) => {
+        app.setLauncherTop(top);
       },
       onImportFile: async (file) => {
         try {

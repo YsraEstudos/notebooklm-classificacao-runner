@@ -12,6 +12,8 @@ const COMPOSE_SELECTORS = [
 ];
 
 const SEND_BUTTON_SELECTORS = [
+  'button.submit-button[aria-label="Enviar"]',
+  'button.submit-button',
   'button[aria-label="Enviar"]',
   'button[aria-label*="send"]',
   'button[type="submit"]',
@@ -103,6 +105,14 @@ function isWritableControl(element) {
   return true;
 }
 
+function isEnabledButton(element) {
+  if (!element) return false;
+  if (element.disabled) return false;
+  if (element.matches?.('[disabled], [aria-disabled="true"], .mat-mdc-button-disabled')) return false;
+  if (element.getAttribute?.('aria-disabled') === 'true') return false;
+  return true;
+}
+
 function firstVisibleMatch(list, predicates) {
   for (const element of list) {
     if (!isVisible(element)) continue;
@@ -142,16 +152,38 @@ export function getComposeTextarea() {
 }
 
 export function getSendButton() {
-  const buttons = queryAllDeep('button, [role="button"]');
-  return firstVisibleMatch(buttons, [
-    element => SEND_BUTTON_SELECTORS.some(selector => {
+  const composeForm = getComposeTextarea()?.closest?.('form') || null;
+  const buttons = queryAllDeep('button, [role="button"]', composeForm || document);
+  const candidates = [];
+
+  for (const element of buttons) {
+    if (!isVisible(element)) continue;
+    if (isInsideShadowPanel(element)) continue;
+
+    let score = -1;
+
+    if (SEND_BUTTON_SELECTORS.some(selector => {
       try {
         return element.matches(selector);
       } catch {
         return false;
       }
-    }) || labelMatches(element, [/enviar/, /send/]),
-  ]);
+    })) {
+      score = 100;
+    } else if (labelMatches(element, [/enviar/, /send/])) {
+      score = 60;
+    }
+
+    if (score < 0) continue;
+
+    if (element.closest?.('form')) score += 20;
+    if (element.closest?.('.message-container')) score += 10;
+
+    candidates.push({ element, score });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.element || null;
 }
 
 export function setTextareaValue(textarea, value) {
@@ -183,6 +215,18 @@ export function setTextareaValue(textarea, value) {
     composed: true,
     data: text,
     inputType: 'insertText',
+  }));
+
+  textarea.dispatchEvent(new Event('input', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  }));
+
+  textarea.dispatchEvent(new Event('keyup', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
   }));
 
   textarea.dispatchEvent(new Event('change', {
@@ -221,8 +265,60 @@ export async function waitForComposeTextarea(signal) {
 export async function waitForSendButton(signal) {
   return waitFor(() => {
     const button = getSendButton();
-    return button && !button.disabled ? button : null;
+    return isEnabledButton(button) ? button : null;
   }, { timeoutMs: 10000, intervalMs: 250, signal });
+}
+
+export async function activateSubmitButton(button, signal) {
+  if (!button) return false;
+
+  const form = button.closest?.('form') || null;
+  const touchTarget = button.querySelector?.('.mat-mdc-button-touch-target');
+
+  try {
+    button.focus?.({ preventScroll: true });
+  } catch {
+    button.focus?.();
+  }
+
+  try {
+    button.click?.();
+  } catch {
+    // Fallbacks abaixo
+  }
+
+  if (touchTarget && typeof touchTarget.click === 'function') {
+    try {
+      touchTarget.click();
+    } catch {
+      // Fallbacks abaixo
+    }
+  }
+
+  if (form?.requestSubmit) {
+    try {
+      form.requestSubmit(button);
+    } catch {
+      try {
+        form.requestSubmit();
+      } catch {
+        // Fallback abaixo
+      }
+    }
+  } else if (form) {
+    try {
+      form.dispatchEvent(new Event('submit', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      }));
+    } catch {
+      // Fallback final abaixo
+    }
+  }
+
+  await delay(75, signal);
+  return true;
 }
 
 function cloneWithoutControls(element) {
@@ -338,13 +434,14 @@ export async function sendBatchToNotebook(promptText, signal) {
   }
 
   setTextareaValue(textarea, promptText);
+  await delay(150, signal);
 
   const sendButton = await waitForSendButton(signal);
   if (!sendButton) {
     throw new Error('Não encontrei o botão de enviar habilitado.');
   }
 
-  clickTouchTarget(sendButton);
+  await activateSubmitButton(sendButton, signal);
   return true;
 }
 
