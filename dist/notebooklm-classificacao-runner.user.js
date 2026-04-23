@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotebookLM Classificacao Runner
 // @namespace    npm/vite-plugin-monkey
-// @version      1.0.10
+// @version      1.0.11
 // @author       monkey
 // @homepage     https://github.com/YsraEstudos/notebooklm-classificacao-runner
 // @homepageURL  https://github.com/YsraEstudos/notebooklm-classificacao-runner
@@ -301,6 +301,20 @@
   }
   function buildBatchText(batchItems) {
     return batchItems.map((item, index) => `${index + 1}. ${item.text}`).join("\n\n");
+  }
+  function buildBatchItemText(item, index, includeId = false) {
+    const itemId = includeId && (item == null ? void 0 : item.id) ? ` [ID: ${item.id}]` : "";
+    return `${index + 1}.${itemId} ${item.text}`;
+  }
+  function buildFirstBatchText(batchItems) {
+    const instruction = [
+      "Elenque o codigo id junto.",
+      "Elenque 3 possiveis ncms com argumentos da nesh do mais provavel ao menos provavel usando as regras da nesh e unica e exclusivamente informacoes que o item nos tras (se nao tiver infos o suficiente me deixe o primeiro ncm zerado pela falta de informacao) para e qual sua opiniao final:"
+    ].join("\n");
+    const itemsText = batchItems.map((item, index) => buildBatchItemText(item, index, true)).join("\n\n");
+    return `${instruction}
+
+${itemsText}`;
   }
   function buildHistoryClipboardText(history) {
     return history.filter((entry) => normalizeDisplayText((entry == null ? void 0 : entry.responseText) || "")).map((entry, index) => {
@@ -1051,7 +1065,7 @@ ${entry.responseText}`;
         endIndex,
         itemCount,
         items: fallbackItems,
-        promptText: fallback.promptText || (queueSlice.length ? buildBatchText(queueSlice) : "")
+        promptText: fallback.promptText || (queueSlice.length ? safeStartIndex === 0 ? buildFirstBatchText(queueSlice) : buildBatchText(queueSlice) : "")
       };
     }
     createHistoryEntryFromMessage(messageOrder, message, existingEntry = null) {
@@ -1116,7 +1130,7 @@ ${entry.responseText}`;
           const batch = this.state.queue.slice(cursor, cursor + BATCH_SIZE);
           if (!batch.length) break;
           const batchNumber = Math.floor(cursor / BATCH_SIZE) + 1;
-          const promptText = buildBatchText(batch);
+          const promptText = cursor === 0 ? buildFirstBatchText(batch) : buildBatchText(batch);
           const batchId = `batch_${Date.now()}_${cursor}`;
           const baselineSignatures = snapshotAssistantSignatures();
           const waitMs = this.getWaitMs();

@@ -91,8 +91,13 @@ describe('ClassificacaoRunner', () => {
 
     expect(sendBatchToNotebook).toHaveBeenCalledTimes(3);
     expect(waitForBatchDeadline).toHaveBeenCalledTimes(3);
-    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('1. Primeiro item de exemplo para enviar ao NotebookLM.');
-    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('3. Terceiro item de exemplo com outro conteúdo.');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('Elenque o codigo id junto.');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('Elenque 3 possiveis ncms');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('[ID: item_');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('1. [ID:');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('Primeiro item de exemplo para enviar ao NotebookLM.');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('3. [ID:');
+    expect(sendBatchToNotebook.mock.calls[0][0]).toContain('Terceiro item de exemplo com outro conteúdo.');
     expect(sendBatchToNotebook.mock.calls[1][0]).toContain('1. Quarto item de exemplo para mostrar continuidade.');
     expect(sendBatchToNotebook.mock.calls[2][0]).toContain('1. Sétimo item de exemplo para fechar o lote final.');
 
@@ -146,6 +151,16 @@ describe('ClassificacaoRunner', () => {
     expect(waitForBatchDeadline).toHaveBeenCalledTimes(3);
     expect(waitForBatchDeadline.mock.calls[0][0]).toBe(16_000);
     expect(runner.getState().waitMs).toBe(15_000);
+  });
+
+  it('reloads the persisted wait time in a fresh runner instance', async () => {
+    const runner = new ClassificacaoRunner();
+    await runner.loadDraftAndReset(createExampleJson());
+    runner.updateWaitMs(22_000);
+
+    const reloadedRunner = new ClassificacaoRunner();
+
+    expect(reloadedRunner.getState().waitMs).toBe(22_000);
   });
 
   it('rewinds progress without clearing the captured history', async () => {

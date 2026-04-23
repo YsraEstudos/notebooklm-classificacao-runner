@@ -1,6 +1,7 @@
 import {
   buildBatchText,
   buildHistoryClipboardText,
+  buildFirstBatchText,
   loadState,
   parseQueueFromJson,
   saveState,
@@ -325,7 +326,9 @@ export class ClassificacaoRunner {
       endIndex,
       itemCount,
       items: fallbackItems,
-      promptText: fallback.promptText || (queueSlice.length ? buildBatchText(queueSlice) : ''),
+      promptText: fallback.promptText || (queueSlice.length
+        ? (safeStartIndex === 0 ? buildFirstBatchText(queueSlice) : buildBatchText(queueSlice))
+        : ''),
     };
   }
 
@@ -406,7 +409,7 @@ export class ClassificacaoRunner {
         if (!batch.length) break;
 
         const batchNumber = Math.floor(cursor / BATCH_SIZE) + 1;
-        const promptText = buildBatchText(batch);
+        const promptText = cursor === 0 ? buildFirstBatchText(batch) : buildBatchText(batch);
         const batchId = `batch_${Date.now()}_${cursor}`;
         const baselineSignatures = snapshotAssistantSignatures();
         const waitMs = this.getWaitMs();

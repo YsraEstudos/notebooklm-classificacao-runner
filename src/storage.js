@@ -216,6 +216,24 @@ export function buildBatchText(batchItems) {
     .join('\n\n');
 }
 
+function buildBatchItemText(item, index, includeId = false) {
+  const itemId = includeId && item?.id ? ` [ID: ${item.id}]` : '';
+  return `${index + 1}.${itemId} ${item.text}`;
+}
+
+export function buildFirstBatchText(batchItems) {
+  const instruction = [
+    'Elenque o codigo id junto.',
+    'Elenque 3 possiveis ncms com argumentos da nesh do mais provavel ao menos provavel usando as regras da nesh e unica e exclusivamente informacoes que o item nos tras (se nao tiver infos o suficiente me deixe o primeiro ncm zerado pela falta de informacao) para e qual sua opiniao final:',
+  ].join('\n');
+
+  const itemsText = batchItems
+    .map((item, index) => buildBatchItemText(item, index, true))
+    .join('\n\n');
+
+  return `${instruction}\n\n${itemsText}`;
+}
+
 export function buildHistoryClipboardText(history) {
   return history
     .filter(entry => normalizeDisplayText(entry?.responseText || ''))
